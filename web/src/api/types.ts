@@ -313,6 +313,18 @@ export type MaterialPreview = {
   byte_size: number
   locator?: Record<string, unknown>
   content_url?: string
+  snapshot?: {
+    material_id?: string
+    filename?: string | null
+    checksum?: string | null
+    original_checksum?: string | null
+    byte_size?: number | null
+    snapshot_path?: string | null
+    role?: string
+    frozen?: boolean
+    copy_error?: string | null
+  } | null
+  frozen?: boolean
 }
 
 export type ReadinessPayload = {
@@ -382,6 +394,18 @@ export type ModelingRun = {
   drafts: { id: string; revision_no: number; completeness: string; created_at: string }[]
   created_at: string
   updated_at: string
+  heartbeat_at?: string | null
+  stale_input?: boolean
+  snapshot?: {
+    materials?: Array<{
+      id: string
+      filename?: string | null
+      checksum?: string | null
+      snapshot_path?: string | null
+      role?: string
+      byte_size?: number | null
+    }>
+  } | null
 }
 
 export type ModelingClaim = {
@@ -407,6 +431,7 @@ export type EvidenceRef = {
   end_offset?: number | null
   sheet?: string | null
   cell_ref?: string | null
+  region?: Record<string, unknown> | null
   quote?: string | null
 }
 
@@ -430,6 +455,10 @@ export type ModelingBaseline = {
   markdown: string
   created_at: string
   solver: string
+  immutable?: boolean
+  draft_revision_no?: number | null
+  claim_count?: number
+  source_count?: number
 }
 
 export type ClaimReviewEvent = {

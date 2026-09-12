@@ -299,7 +299,14 @@ export function listBaselines(projectId: string): Promise<ModelingBaseline[]> {
 export function getMaterialPreview(
   projectId: string,
   materialId: string,
-  opts?: { start?: number; end?: number; page?: number | null; sheet?: string | null; cell?: string | null },
+  opts?: {
+    start?: number
+    end?: number
+    page?: number | null
+    sheet?: string | null
+    cell?: string | null
+    runId?: string | null
+  },
 ): Promise<MaterialPreview> {
   const params = new URLSearchParams()
   if (opts?.start != null) params.set('start', String(opts.start))
@@ -309,10 +316,14 @@ export function getMaterialPreview(
   if (opts?.cell) params.set('cell_ref', opts.cell)
   const query = params.toString()
   const suffix = query ? `?${query}` : ''
+  if (opts?.runId) {
+    return request<MaterialPreview>(`/modeling-runs/${opts.runId}/materials/${materialId}/preview${suffix}`)
+  }
   return request<MaterialPreview>(`/projects/${projectId}/materials/${materialId}/preview${suffix}`)
 }
 
-export function materialContentUrl(projectId: string, materialId: string): string {
+export function materialContentUrl(projectId: string, materialId: string, runId?: string | null): string {
+  if (runId) return `/api/modeling-runs/${runId}/materials/${materialId}/content`
   return `/api/projects/${projectId}/materials/${materialId}/content`
 }
 

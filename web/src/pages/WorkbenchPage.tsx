@@ -25,7 +25,7 @@ export function WorkbenchPage() {
   const { projectId, workspaceId } = useParams()
   const { locale, t } = useI18n()
   const health = useHealth()
-  const { state, data, error, reload } = useWorkbench(projectId)
+  const { state, data, error, stale, reload } = useWorkbench(projectId)
 
   if (!projectId) return <Navigate to="/analyses" replace />
   if (workspaceId && WORKSPACE_ALIASES[workspaceId]) {
@@ -70,12 +70,23 @@ export function WorkbenchPage() {
           <ErrorState
             title={t('analysisOpenError')}
             body={error ?? t('projectNotReturned')}
-            action={<Link className="btn btn-secondary" to="/analyses">{t('backAnalyses')}</Link>}
+            action={
+              <>
+                <button className="btn btn-primary" type="button" onClick={() => void reload()}>{t('retry')}</button>
+                <Link className="btn btn-secondary" to="/analyses">{t('backAnalyses')}</Link>
+              </>
+            }
           />
         ) : null}
 
         {viewState === 'ready' && showing ? (
           <>
+            {stale && error ? (
+              <p className="notice warn" role="status">
+                {t('staleReload')} {error}{' '}
+                <button className="btn btn-ghost" type="button" onClick={() => void reload()}>{t('retry')}</button>
+              </p>
+            ) : null}
             <div className="project-head">
               <div className="project-kicker">
                 <Link className="crumb" to="/analyses">{t('myAnalyses')}</Link>
@@ -132,6 +143,7 @@ export function WorkbenchPage() {
                     projectId={projectId}
                     baselines={showing.baselines}
                     drafts={showing.drafts}
+                    currentBaselineId={showing.project.latest.baseline_id}
                     reload={reload}
                   />
                 ) : null}

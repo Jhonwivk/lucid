@@ -242,6 +242,12 @@ export function claimKindHeading(kind: string, t: Translate): string {
       return t('claimKindParameter')
     case 'entity':
       return t('claimKindEntity')
+    case 'assumption':
+      return t('claimKindAssumption')
+    case 'variable':
+      return t('claimKindVariable')
+    case 'readiness':
+      return t('claimKindReadiness')
     default:
       return kind
   }

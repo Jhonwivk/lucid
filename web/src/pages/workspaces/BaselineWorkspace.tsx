@@ -3,21 +3,41 @@ import type { ModelingBaseline, ModelingDraftRecord } from '../../api/types'
 import { useI18n } from '../../i18n'
 import { freezeBaseline, errorMessage } from '../../api/client'
 import { formatTimestamp } from '../../lib/format'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 type BaselineWorkspaceProps = {
   projectId: string
   baselines: ModelingBaseline[]
   drafts: ModelingDraftRecord[]
+  currentBaselineId?: string | null
   reload: () => Promise<void> | void
 }
 
-export function BaselineWorkspace({ projectId, baselines, drafts, reload }: BaselineWorkspaceProps) {
+function sortBaselines(rows: ModelingBaseline[]): ModelingBaseline[] {
+  return [...rows].sort((left, right) => {
+    const byTime = (right.created_at || '').localeCompare(left.created_at || '')
+    if (byTime !== 0) return byTime
+    return (right.draft_revision_no ?? 0) - (left.draft_revision_no ?? 0)
+  })
+}
+
+export function BaselineWorkspace({
+  projectId,
+  baselines,
+  drafts,
+  currentBaselineId,
+  reload,
+}: BaselineWorkspaceProps) {
   const { locale, t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [exporting, setExporting] = useState<'md' | 'json' | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
+  const ordered = useMemo(() => sortBaselines(baselines), [baselines])
+  const currentId = currentBaselineId || ordered[0]?.id || null
+  const [selectedId, setSelectedId] = useState<string | null>(currentId)
+  const selected = ordered.find((item) => item.id === selectedId) ?? ordered[0]
   const latestDraft = drafts[drafts.length - 1] ?? null
-  const latest = baselines[baselines.length - 1]
   const canFreeze = latestDraft && latestDraft.version_state !== 'confirmed'
 
   async function onFreeze() {
@@ -25,12 +45,38 @@ export function BaselineWorkspace({ projectId, baselines, drafts, reload }: Base
     setBusy(true)
     setError(null)
     try {
-      await freezeBaseline(projectId, latestDraft.id)
+      const frozen = await freezeBaseline(projectId, latestDraft.id)
+      setSelectedId(frozen.id)
       await reload()
     } catch (err) {
       setError(errorMessage(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function onExport(kind: 'md' | 'json') {
+    if (!selected || exporting) return
+    setExporting(kind)
+    setExportError(null)
+    try {
+      const response = await fetch(`/api/baselines/${selected.id}/export.${kind}`)
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`)
+      }
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `lucid-baseline-${selected.id.slice(0, 8)}.${kind}`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setExportError(errorMessage(err))
+    } finally {
+      setExporting(null)
     }
   }
 
@@ -55,20 +101,73 @@ export function BaselineWorkspace({ projectId, baselines, drafts, reload }: Base
   return (
     <div className="stage">
       <p className="muted">{t('frozenAlready')}</p>
-      <article className="fact present">
-        <div className="fact-label">{t('baseline')}</div>
-        <p>{t('recorded')} {formatTimestamp(latest.created_at, locale, t)}</p>
-        <p>{t('solver')}: {latest.solver}</p>
-        <div className="review-actions">
-          <a className="btn btn-secondary" href={`/api/baselines/${latest.id}/export.md`}>{t('exportMarkdown')}</a>
-          <a className="btn btn-secondary" href={`/api/baselines/${latest.id}/export.json`}>{t('exportJson')}</a>
+      {ordered.length > 1 ? (
+        <div className="stack">
+          <h3>{t('historicalBaselines')}</h3>
+          <ul className="coverage-list">
+            {ordered.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  className={item.id === selected?.id ? 'active' : ''}
+                  aria-current={item.id === currentId ? 'true' : undefined}
+                  onClick={() => setSelectedId(item.id)}
+                >
+                  {item.id.slice(0, 8)} · {formatTimestamp(item.created_at, locale, t)}
+                  {item.id === currentId ? ` · ${t('currentVersion')}` : ''}
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
-        <pre className="source-text">{latest.markdown}</pre>
-        <details className="tech-details">
-          <summary>{t('technicalDetails')}</summary>
-          <pre>{JSON.stringify(latest.handoff, null, 2)}</pre>
-        </details>
-      </article>
+      ) : null}
+      {selected ? (
+        <article className="fact present">
+          <div className="fact-label">{t('currentBaseline')}</div>
+          <p>{t('selectedBaseline')} {selected.id}</p>
+          <p>{t('draftRevision')} {selected.draft_revision_no ?? t('none')}</p>
+          <p>{t('frozenAt')} {formatTimestamp(selected.created_at, locale, t)}</p>
+          <p>{t('sourceCount')} {selected.source_count ?? t('none')}</p>
+          <p>{t('claimCount')} {selected.claim_count ?? t('none')}</p>
+          <p>{t('baselineImmutable')}: {String(selected.immutable ?? true)}</p>
+          <p>{t('solver')}: {selected.solver}</p>
+          <div className="review-actions">
+            <button
+              className="btn btn-secondary"
+              type="button"
+              disabled={exporting != null}
+              aria-busy={exporting === 'md'}
+              aria-disabled={exporting != null}
+              onClick={() => void onExport('md')}
+            >
+              {exporting === 'md' ? t('exportingMarkdown') : t('exportMarkdown')}
+            </button>
+            <button
+              className="btn btn-secondary"
+              type="button"
+              disabled={exporting != null}
+              aria-busy={exporting === 'json'}
+              aria-disabled={exporting != null}
+              onClick={() => void onExport('json')}
+            >
+              {exporting === 'json' ? t('exportingJson') : t('exportJson')}
+            </button>
+          </div>
+          {exportError ? (
+            <p role="alert">
+              {t('exportFailed')} {exportError}{' '}
+              <button className="btn btn-ghost" type="button" onClick={() => void onExport('md')}>
+                {t('retryExport')}
+              </button>
+            </p>
+          ) : null}
+          <pre className="source-text">{selected.markdown}</pre>
+          <details className="tech-details">
+            <summary>{t('technicalDetails')}</summary>
+            <pre>{JSON.stringify(selected.handoff, null, 2)}</pre>
+          </details>
+        </article>
+      ) : null}
       {error ? <p role="alert">{error}</p> : null}
     </div>
   )

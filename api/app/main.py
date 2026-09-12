@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .db import ensure_database
 from .importers import INTAKE_CAPABILITY
 from .modeling.checkpointer import get_checkpointer
+from .modeling.runner import recover_on_startup
 from .modeling_routes import router as modeling_router
 from .routes import router as persistence_router
 from .runtime_config import snapshot
@@ -90,6 +91,7 @@ class ShellResponse(BaseModel):
 async def lifespan(_app: FastAPI):
     ensure_database()
     get_checkpointer()
+    recover_on_startup()
     try:
         yield
     finally:

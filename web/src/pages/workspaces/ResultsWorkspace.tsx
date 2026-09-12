@@ -11,8 +11,10 @@ export function ResultsWorkspace({ solveRuns }: ResultsWorkspaceProps) {
   return (
     <div className="stage">
       <div className="notice warn">
+        <p className="stamp">{t('stage2Boundary')}</p>
         <h2>{t('solverNotImplemented')}</h2>
         <p>{t('solverNotImplementedBody')}</p>
+        <p className="muted">{t('stage2BoundaryBody')}</p>
       </div>
       {solveRuns.length === 0 ? (
         <EmptyState title={t('noSolveRecords')} body={t('noSolveRecordsBody')} />
@@ -22,6 +24,7 @@ export function ResultsWorkspace({ solveRuns }: ResultsWorkspaceProps) {
           <article className="fact unknown" key={run.id}>
             <div className="fact-label">{t('solveMetadata')}</div>
             <h3>{t('runState')} {solveRunStateLabel(run.run_state, t)}</h3>
+            <p className="muted">{t('stage2BoundaryBody')}</p>
             <div className="meta-row">
               <span>{t('claimedExecution')} {String(run.claimed_execution)}</span>
               <span>{t('execution')} {run.execution}</span>

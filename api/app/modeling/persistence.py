@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from ..db import connect, utc_now
 from .. import ingest, store
 from ..schemas import RuleIn, UnderstandingCreate
 from .draft import ModelingDraft
-from .provenance import INCOMPLETE_COVERAGE, validate_draft
-from .snapshot import freeze_materials
+from .export import REVIEWABLE_CLAIM_KINDS
+from .provenance import INCOMPLETE_COVERAGE, stamp_run_coverage, validate_draft
+from .snapshot import freeze_materials, snapshot_of
 
 RUN_STATUSES = (
     "queued",
@@ -23,6 +25,9 @@ RUN_STATUSES = (
     "failed",
     "cancelled",
 )
+TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+ACTIVE_WORKER_STATUSES = frozenset({"queued", "running"})
+HEARTBEAT_STALE_SECONDS = 120
 
 
 class StaleRunError(store.ConflictError):
@@ -84,10 +89,11 @@ def create_run(
     spans = store.list_source_spans(project_id)
     fingerprint = evidence_fingerprint(materials)
     coverage = initial_coverage(materials, azure_configured=azure_configured)
-    snapshot = freeze_materials(materials, spans)
-    snapshot["frozen_at"] = utc_now()
     run_id = _new_id()
+    snapshot = freeze_materials(materials, spans, run_id=run_id, project_id=project_id)
+    snapshot["frozen_at"] = utc_now()
     now = utc_now()
+    stale_copy = bool(snapshot.get("copy_failures"))
     conn = connect()
     try:
         with conn:
@@ -98,8 +104,8 @@ def create_run(
                     id, project_id, thread_id, status, question, evidence_fingerprint,
                     coverage_json, tool_call_count, max_tool_calls, live_execution,
                     model_configured, azure_configured, snapshot_json, question_material_id,
-                    max_wall_seconds, created_at, updated_at
-                ) VALUES (?, ?, ?, 'queued', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    max_wall_seconds, stale_input, created_at, updated_at
+                ) VALUES (?, ?, ?, 'queued', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -115,6 +121,7 @@ def create_run(
                     _dump(snapshot),
                     question_material_id,
                     max_wall_seconds,
+                    1 if stale_copy else 0,
                     now,
                     now,
                 ),
@@ -134,8 +141,25 @@ def create_run(
                 entity_kind="modeling_run",
                 entity_id=run_id,
                 summary="Queued a business modeling run",
-                payload={"live_execution": live_execution},
+                payload={"live_execution": live_execution, "copy_failures": snapshot.get("copy_failures") or 0},
             )
+            if stale_copy:
+                conn.execute(
+                    """
+                    INSERT INTO modeling_run_event (
+                        id, run_id, project_id, kind, title, detail, payload_json, created_at
+                    ) VALUES (?, ?, ?, 'status', ?, ?, ?, ?)
+                    """,
+                    (
+                        _new_id(),
+                        run_id,
+                        project_id,
+                        "Snapshot copy incomplete",
+                        "One or more frozen snapshot files could not be copied from live materials.",
+                        _dump({"copy_failures": snapshot.get("copy_failures")}),
+                        now,
+                    ),
+                )
         return get_run(run_id)
     finally:
         conn.close()
@@ -212,7 +236,127 @@ def list_runs(project_id: str) -> list[dict[str, Any]]:
             """,
             (project_id,),
         ).fetchall()
+        ids = [row["id"] for row in rows]
+    finally:
+        conn.close()
+    return [get_run(run_id) for run_id in ids]
+
+
+def list_runs_in_statuses(statuses: tuple[str, ...] | list[str]) -> list[dict[str, Any]]:
+    conn = connect()
+    try:
+        placeholders = ",".join("?" for _ in statuses)
+        rows = conn.execute(
+            f"""
+            SELECT * FROM modeling_run
+            WHERE status IN ({placeholders})
+            ORDER BY created_at, id
+            """,
+            tuple(statuses),
+        ).fetchall()
         return [_run_from_row(conn, row) for row in rows]
+    finally:
+        conn.close()
+
+
+def touch_heartbeat(run_id: str) -> None:
+    conn = connect()
+    try:
+        with conn:
+            conn.execute(
+                """
+                UPDATE modeling_run
+                SET heartbeat_at = ?, updated_at = ?
+                WHERE id = ? AND status IN ('queued','running')
+                """,
+                (utc_now(), utc_now(), run_id),
+            )
+    finally:
+        conn.close()
+
+
+def mark_stale_input(run_id: str, *, reason: str) -> dict[str, Any]:
+    run = get_run(run_id)
+    append_event(run_id, kind="status", title="stale_input", detail=reason)
+    if run["stale_input"]:
+        return get_run(run_id)
+    return update_run(run_id, stale_input=True)
+
+
+def _seconds_since(iso_value: str | None) -> float | None:
+    if not iso_value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(iso_value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - stamp).total_seconds()
+
+
+def maybe_expire_run(run_id: str) -> dict[str, Any]:
+    """Fail queued/running runs that exceeded wall or heartbeat bounds."""
+    conn = connect()
+    try:
+        with conn:
+            row = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
+            if row is None:
+                raise store.NotFoundError("modeling run not found")
+            if row["status"] not in ACTIVE_WORKER_STATUSES:
+                return _run_from_row(conn, row)
+            now = utc_now()
+            reason = None
+            code = None
+            deadline = row["wall_deadline_at"] if "wall_deadline_at" in set(row.keys()) else None
+            if deadline and str(deadline) < now:
+                reason = "Wall time exhausted. This is not a successful modeling run."
+                code = "timeout"
+            else:
+                heartbeat_age = _seconds_since(row["heartbeat_at"])
+                started_age = _seconds_since(row["started_at"] or row["created_at"])
+                if row["status"] == "running" and (
+                    (heartbeat_age is not None and heartbeat_age > HEARTBEAT_STALE_SECONDS)
+                    or (heartbeat_age is None and started_age is not None and started_age > HEARTBEAT_STALE_SECONDS)
+                ):
+                    reason = "Heartbeat expired; the worker is no longer making progress."
+                    code = "worker_lost"
+                elif row["status"] == "queued":
+                    created_age = _seconds_since(row["created_at"])
+                    wall = int(row["max_wall_seconds"] or 180) if "max_wall_seconds" in set(row.keys()) else 180
+                    if created_age is not None and created_age > wall:
+                        reason = "Queued run exceeded its wall budget before a worker started."
+                        code = "timeout"
+            if reason is None:
+                return _run_from_row(conn, row)
+            cursor = conn.execute(
+                """
+                UPDATE modeling_run
+                SET status = 'failed', error_code = ?, error_message = ?,
+                    finished_at = ?, updated_at = ?
+                WHERE id = ? AND status IN ('queued','running')
+                """,
+                (code, reason, now, now, run_id),
+            )
+            if cursor.rowcount == 1:
+                conn.execute(
+                    """
+                    INSERT INTO modeling_run_event (
+                        id, run_id, project_id, kind, title, detail, payload_json, created_at
+                    ) VALUES (?, ?, ?, 'status', ?, ?, ?, ?)
+                    """,
+                    (
+                        _new_id(),
+                        run_id,
+                        row["project_id"],
+                        "Run expired",
+                        reason,
+                        _dump({"error_code": code}),
+                        now,
+                    ),
+                )
+            row = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
+            return _run_from_row(conn, row)
     finally:
         conn.close()
 
@@ -223,10 +367,12 @@ def get_run(run_id: str) -> dict[str, Any]:
         row = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
         if row is None:
             raise store.NotFoundError("modeling run not found")
-        return _run_from_row(conn, row)
+        if row["status"] not in ACTIVE_WORKER_STATUSES:
+            return _run_from_row(conn, row)
+        run_id_value = row["id"]
     finally:
         conn.close()
-
+    return maybe_expire_run(run_id_value)
 
 def _run_from_row(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     events = conn.execute(
@@ -398,34 +544,80 @@ def update_run(run_id: str, **fields: Any) -> dict[str, Any]:
             assignments.append("updated_at = ?")
             values.append(utc_now())
             values.append(run_id)
-            conn.execute(
-                f"UPDATE modeling_run SET {', '.join(assignments)} WHERE id = ?",
-                values,
-            )
+            if "status" in fields and fields["status"] in TERMINAL_STATUSES:
+                conn.execute(
+                    f"UPDATE modeling_run SET {', '.join(assignments)} WHERE id = ? AND status NOT IN ('completed','failed','cancelled')",
+                    values,
+                )
+                changed = conn.execute("SELECT changes()").fetchone()[0]
+                if not changed:
+                    raise StaleRunError(f"cannot move {current_status} run to {fields['status']}")
+            elif "status" in fields:
+                conn.execute(
+                    f"UPDATE modeling_run SET {', '.join(assignments)} WHERE id = ? AND status = ?",
+                    [*values, current_status],
+                )
+                changed = conn.execute("SELECT changes()").fetchone()[0]
+                if not changed:
+                    raise StaleRunError(f"cannot move {current_status} run to {fields['status']}")
+            else:
+                conn.execute(
+                    f"UPDATE modeling_run SET {', '.join(assignments)} WHERE id = ?",
+                    values,
+                )
         return get_run(run_id)
     finally:
         conn.close()
 
 
 def _assert_status_transition(current: str, nxt: str, row: sqlite3.Row) -> None:
+    del row
     if current == nxt:
         return
-    terminal = {"completed", "failed", "cancelled"}
-    if current in terminal and nxt == "completed":
-        raise StaleRunError("a finished or cancelled run cannot be published as completed")
-    if current == "completed" and nxt in terminal - {"completed"}:
-        # failed/cancelled after complete is not used to overwrite a newer published draft
-        if nxt == "completed":
-            raise StaleRunError("completed run cannot be rewritten")
-    if current in terminal and nxt not in {"failed", "cancelled"} and nxt != current:
+    if current in TERMINAL_STATUSES:
+        raise StaleRunError(f"cannot move {current} run to {nxt}")
+    allowed = {
+        "queued": {"running", "failed", "cancelled"},
+        "running": {"running", "waiting_for_user", "partial", "completed", "failed", "cancelled"},
+        "waiting_for_user": {"running", "partial", "completed", "cancelled", "failed", "waiting_for_user"},
+        "partial": {"partial", "completed", "failed", "cancelled"},
+    }
+    if nxt not in allowed.get(current, set()):
         raise StaleRunError(f"cannot move {current} run to {nxt}")
 
 
 def request_cancel(run_id: str) -> dict[str, Any]:
-    run = get_run(run_id)
-    if run["status"] in {"completed", "failed", "cancelled"}:
-        return run
-    return update_run(run_id, cancel_requested=True, status="cancelled", finished_at=utc_now())
+    conn = connect()
+    try:
+        with conn:
+            row = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
+            if row is None:
+                raise store.NotFoundError("modeling run not found")
+            if row["status"] in TERMINAL_STATUSES:
+                return _run_from_row(conn, row)
+            now = utc_now()
+            cursor = conn.execute(
+                """
+                UPDATE modeling_run
+                SET cancel_requested = 1, status = 'cancelled', finished_at = ?, updated_at = ?
+                WHERE id = ? AND status NOT IN ('completed','failed','cancelled')
+                """,
+                (now, now, run_id),
+            )
+            if cursor.rowcount != 1:
+                row = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
+                return _run_from_row(conn, row)
+            conn.execute(
+                """
+                INSERT INTO modeling_run_event (
+                    id, run_id, project_id, kind, title, detail, payload_json, created_at
+                ) VALUES (?, ?, ?, 'status', ?, NULL, NULL, ?)
+                """,
+                (_new_id(), run_id, row["project_id"], "Run cancelled", now),
+            )
+        return get_run(run_id)
+    finally:
+        conn.close()
 
 
 def increment_tool_count(run_id: str) -> int:
@@ -643,8 +835,20 @@ def claim_resume(run_id: str, answer: str) -> dict[str, Any]:
             row = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
             if row is None:
                 raise store.NotFoundError("modeling run not found")
+            if row["status"] in TERMINAL_STATUSES:
+                raise store.ConflictError(f"{row['status']} run cannot be resumed")
             if row["status"] != "waiting_for_user":
                 raise store.ConflictError("run is not waiting for a clarification")
+            pending = conn.execute(
+                """
+                SELECT id FROM modeling_clarification
+                WHERE run_id = ? AND status = 'pending'
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (run_id,),
+            ).fetchone()
+            if pending is None:
+                raise store.ConflictError("run has no pending clarification")
             claim_id = _new_id()
             now = utc_now()
             cursor = conn.execute(
@@ -657,6 +861,47 @@ def claim_resume(run_id: str, answer: str) -> dict[str, Any]:
             )
             if cursor.rowcount != 1:
                 raise store.ConflictError("duplicate or conflicting resume")
+        return get_run(run_id)
+    finally:
+        conn.close()
+
+
+def rollback_resume(run_id: str, claim_id: str | None) -> dict[str, Any]:
+    """If the worker never started, restore waiting_for_user for the same claim."""
+    if not claim_id:
+        return get_run(run_id)
+    conn = connect()
+    try:
+        with conn:
+            now = utc_now()
+            cursor = conn.execute(
+                """
+                UPDATE modeling_run
+                SET status = 'waiting_for_user', resume_claim_id = NULL, updated_at = ?
+                WHERE id = ? AND status = 'running' AND resume_claim_id = ?
+                """,
+                (now, run_id, claim_id),
+            )
+            if cursor.rowcount == 1:
+                run = conn.execute(
+                    "SELECT project_id FROM modeling_run WHERE id = ?", (run_id,)
+                ).fetchone()
+                if run is not None:
+                    conn.execute(
+                        """
+                        INSERT INTO modeling_run_event (
+                            id, run_id, project_id, kind, title, detail, payload_json, created_at
+                        ) VALUES (?, ?, ?, 'status', ?, ?, NULL, ?)
+                        """,
+                        (
+                            _new_id(),
+                            run_id,
+                            run["project_id"],
+                            "Resume worker failed",
+                            "Clarification was not consumed; the run is waiting for the same answer again.",
+                            now,
+                        ),
+                    )
         return get_run(run_id)
     finally:
         conn.close()
@@ -794,6 +1039,21 @@ def save_draft(run_id: str, draft: ModelingDraft, *, completeness: str | None = 
     if run["stale_input"]:
         raise StaleRunError("stale run cannot publish a draft over a newer project head")
     validate_draft(run, draft)
+    payload = stamp_run_coverage(run, payload)
+    draft = ModelingDraft.model_validate(
+        {**payload, "coverage": [
+            {
+                "material_id": item.get("material_id"),
+                "filename": item.get("filename") or "unnamed",
+                "state": item.get("state") or "pending",
+                "detail": item.get("detail"),
+                "needs_azure": bool(item.get("needs_azure")),
+                "azure_operation_id": item.get("azure_operation_id"),
+            }
+            for item in payload.get("coverage") or []
+            if item.get("material_id")
+        ]}
+    )
     coverage = run.get("coverage") or []
     incomplete = [item for item in coverage if (item.get("state") or "pending") in INCOMPLETE_COVERAGE]
     if incomplete and draft.completeness == "complete":
@@ -1155,6 +1415,10 @@ def review_claim(
             row = conn.execute("SELECT * FROM modeling_claim WHERE id = ?", (claim_id,)).fetchone()
             if row is None:
                 raise store.NotFoundError("claim not found")
+            if row["claim_kind"] not in REVIEWABLE_CLAIM_KINDS:
+                raise ValueError(
+                    f"claim_kind {row['claim_kind']!r} is not a reviewable export field"
+                )
             draft = conn.execute(
                 "SELECT version_state FROM modeling_draft WHERE id = ?",
                 (row["draft_id"],),
@@ -1225,7 +1489,31 @@ def freeze_baseline(project_id: str, draft_id: str) -> dict[str, Any]:
     run = get_run(draft["run_id"])
     if run["status"] in {"cancelled", "failed"}:
         raise StaleRunError("cancelled or failed runs cannot freeze a baseline")
-    coverage = (draft.get("draft") or {}).get("coverage") or run.get("coverage") or []
+    if run["stale_input"]:
+        raise StaleRunError("stale_input: frozen snapshot is no longer valid for this run")
+    project = store.get_project(project_id)
+    latest_run_id = (project.get("latest") or {}).get("modeling_run_id") or project.get("latest_modeling_run_id")
+    if latest_run_id and latest_run_id != run["id"]:
+        latest_run = get_run(latest_run_id)
+        if str(latest_run.get("created_at") or "") > str(run.get("created_at") or ""):
+            raise store.ConflictError("a newer modeling run exists; freeze the current run instead")
+    latest_draft_id = (project.get("latest") or {}).get("modeling_draft_id") or project.get("latest_modeling_draft_id")
+    if latest_draft_id and latest_draft_id != draft_id:
+        try:
+            latest_draft = get_draft(latest_draft_id)
+        except store.NotFoundError:
+            latest_draft = None
+        if latest_draft and int(latest_draft.get("revision_no") or 0) > int(draft.get("revision_no") or 0):
+            raise store.ConflictError("a newer modeling draft exists; freeze the current draft instead")
+    latest_baseline_id = (project.get("latest") or {}).get("baseline_id") or project.get("latest_baseline_id")
+    if latest_baseline_id:
+        existing_baseline = get_baseline(latest_baseline_id)
+        existing_draft = get_draft(existing_baseline["draft_id"])
+        if existing_draft["run_id"] != run["id"]:
+            existing_run = get_run(existing_draft["run_id"])
+            if str(existing_run.get("created_at") or "") > str(run.get("created_at") or ""):
+                raise store.ConflictError("a newer frozen baseline already exists; old runs cannot replace it")
+    coverage = run.get("coverage") or []
     incomplete = [item for item in coverage if (item.get("state") or "pending") in INCOMPLETE_COVERAGE]
     if draft.get("completeness") == "complete" and incomplete:
         raise store.ConflictError(
@@ -1244,8 +1532,24 @@ def freeze_baseline(project_id: str, draft_id: str) -> dict[str, Any]:
                     "unresolved critical clarification blocks baseline freeze"
                 )
     export_draft = dict(draft)
-    export_draft["snapshot"] = run.get("snapshot") or {}
+    export_draft["snapshot"] = snapshot_of(run)
+    export_draft["run_coverage"] = coverage
     handoff = structured_handoff(export_draft, for_baseline=True)
+    handoff["coverage"] = coverage
+    handoff["snapshot"] = {
+        "frozen_at": (run.get("snapshot") or {}).get("frozen_at"),
+        "materials": [
+            {
+                "id": item.get("id"),
+                "filename": item.get("filename"),
+                "checksum": item.get("checksum"),
+                "byte_size": item.get("byte_size"),
+                "role": item.get("role") or "original",
+                "snapshot_path": item.get("snapshot_path"),
+            }
+            for item in (run.get("snapshot") or {}).get("materials") or []
+        ],
+    }
     markdown = render_markdown(export_draft, handoff)
     conn = connect()
     try:
@@ -1307,6 +1611,18 @@ def get_baseline(baseline_id: str) -> dict[str, Any]:
         row = conn.execute("SELECT * FROM modeling_baseline WHERE id = ?", (baseline_id,)).fetchone()
         if row is None:
             raise store.NotFoundError("baseline not found")
+        handoff = _load(row["export_json"], {})
+        draft_row = conn.execute(
+            "SELECT revision_no FROM modeling_draft WHERE id = ?",
+            (row["draft_id"],),
+        ).fetchone()
+        claim_row = conn.execute(
+            "SELECT COUNT(*) AS n FROM modeling_claim WHERE draft_id = ?",
+            (row["draft_id"],),
+        ).fetchone()
+        snapshot_materials = ((handoff.get("snapshot") or {}).get("materials") or []) if isinstance(handoff, dict) else []
+        coverage = handoff.get("coverage") if isinstance(handoff, dict) else None
+        source_count = len(snapshot_materials) if snapshot_materials else len(coverage or [])
         return {
             "id": row["id"],
             "project_id": row["project_id"],
@@ -1314,10 +1630,14 @@ def get_baseline(baseline_id: str) -> dict[str, Any]:
             "understanding_revision_id": row["understanding_revision_id"],
             "scenario_id": row["scenario_id"],
             "scenario_revision_id": row["scenario_revision_id"],
-            "handoff": _load(row["export_json"], {}),
+            "handoff": handoff,
             "markdown": row["export_markdown"],
             "created_at": row["created_at"],
             "solver": "not_executed",
+            "immutable": True,
+            "draft_revision_no": None if draft_row is None else draft_row["revision_no"],
+            "claim_count": 0 if claim_row is None else int(claim_row["n"]),
+            "source_count": source_count,
         }
     finally:
         conn.close()

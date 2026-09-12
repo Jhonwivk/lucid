@@ -1,7 +1,8 @@
 """Pre-solver JSON + Markdown export built from explicit human review.
 
-Rejected / not_applicable items are not active constraints or objectives.
-Accepted edits change exported semantics. Original evidence stays in history.
+Rejected / not_applicable items are not active. Accepted edits change exported
+semantics. needs_clarification is unresolved, never active. Original evidence
+stays in history.
 """
 
 from __future__ import annotations
@@ -10,6 +11,29 @@ from typing import Any
 
 EXCLUDED_STATUSES = {"rejected", "not_applicable"}
 UNRESOLVED_STATUSES = {"unreviewed", "needs_clarification"}
+PARTITION_FIELDS = (
+    "entities",
+    "parameters",
+    "decision_variables",
+    "constraints",
+    "objectives",
+    "assumptions",
+    "unknowns",
+    "conflicts",
+    "readiness_issues",
+)
+FIELD_CLAIM_KINDS = {
+    "entities": "entity",
+    "parameters": "parameter",
+    "decision_variables": "variable",
+    "constraints": "constraint",
+    "objectives": "objective",
+    "assumptions": "assumption",
+    "unknowns": "unknown",
+    "conflicts": "conflict",
+    "readiness_issues": "readiness",
+}
+REVIEWABLE_CLAIM_KINDS = frozenset(FIELD_CLAIM_KINDS.values())
 
 
 def _claims_by_key(draft: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -41,11 +65,30 @@ def _apply_edit(item: dict[str, Any], status: str, edited: str | None, claim: di
             effective["raw_value"] = edited
         if "original_statement" in effective and not effective.get("original_statement"):
             effective["original_statement"] = edited
+        if isinstance(item.get("original_statement"), str) and item.get("claim_kind") == "readiness":
+            effective["original_statement"] = edited
     else:
         effective["effective_statement"] = (
             item.get("proposed_interpretation") or item.get("original_statement") or item.get("name")
         )
     return effective
+
+
+def _as_items(raw: Any) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for index, item in enumerate(raw or []):
+        if isinstance(item, dict):
+            items.append(item)
+        elif isinstance(item, str):
+            items.append(
+                {
+                    "claim_key": f"readiness-{index + 1}",
+                    "claim_kind": "readiness",
+                    "original_statement": item,
+                    "review_status": "unreviewed",
+                }
+            )
+    return items
 
 
 def _partition(
@@ -57,9 +100,7 @@ def _partition(
     active: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
-    for item in items or []:
-        if not isinstance(item, dict):
-            continue
+    for item in _as_items(items):
         status, edited, claim = _review_of(item, claims)
         record = _apply_edit(item, status, edited, claim)
         if status in EXCLUDED_STATUSES:
@@ -67,6 +108,8 @@ def _partition(
             continue
         if status in UNRESOLVED_STATUSES:
             unresolved.append(record)
+            if status == "needs_clarification":
+                continue
             if not accepted_only and status == "unreviewed":
                 active.append(record)
             continue
@@ -118,26 +161,21 @@ def structured_handoff(draft: dict[str, Any], *, for_baseline: bool = False) -> 
     body = draft.get("draft") or {}
     claims = _claims_by_key(draft)
     accepted_only = for_baseline
-    constraints_active, constraints_excluded, constraints_unresolved = _partition(
-        body.get("constraints") or [], claims, accepted_only=accepted_only
-    )
-    objectives_active, objectives_excluded, objectives_unresolved = _partition(
-        body.get("objectives") or [], claims, accepted_only=accepted_only
-    )
-    parameters_active, parameters_excluded, parameters_unresolved = _partition(
-        body.get("parameters") or [], claims, accepted_only=accepted_only
-    )
-    entities_active, entities_excluded, entities_unresolved = _partition(
-        body.get("entities") or [], claims, accepted_only=accepted_only
-    )
-    variables_active, variables_excluded, variables_unresolved = _partition(
-        body.get("decision_variables") or [], claims, accepted_only=accepted_only
-    )
+    partitioned: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for field in PARTITION_FIELDS:
+        active, excluded, unresolved = _partition(body.get(field) or [], claims, accepted_only=accepted_only)
+        partitioned[field] = {"active": active, "excluded": excluded, "unresolved": unresolved}
     critical_unresolved = []
-    for item in constraints_unresolved + objectives_unresolved:
-        refs = item.get("evidence_refs") or []
-        if item.get("review_status") == "needs_clarification" and refs:
-            critical_unresolved.append(item.get("claim_key"))
+    for field in ("constraints", "objectives"):
+        for item in partitioned[field]["unresolved"]:
+            if item.get("review_status") == "needs_clarification":
+                critical_unresolved.append(item.get("claim_key"))
+    for field in PARTITION_FIELDS:
+        for item in partitioned[field]["unresolved"]:
+            if item.get("review_status") == "needs_clarification" and item.get("claim_key") not in critical_unresolved:
+                if field not in {"constraints", "objectives"}:
+                    continue
+    coverage = draft.get("run_coverage") or body.get("coverage") or []
     return {
         "kind": "lucid.pre_solver_handoff",
         "solver": "not_executed",
@@ -145,38 +183,25 @@ def structured_handoff(draft: dict[str, Any], *, for_baseline: bool = False) -> 
         "revision_no": draft.get("revision_no"),
         "completeness": draft.get("completeness"),
         "decision_brief": body.get("decision_brief"),
-        "entities": entities_active,
-        "parameters": parameters_active,
-        "decision_variables": variables_active,
-        "constraints": constraints_active,
-        "objectives": objectives_active,
-        "assumptions": body.get("assumptions"),
-        "unknowns": body.get("unknowns"),
-        "conflicts": body.get("conflicts"),
-        "readiness_issues": body.get("readiness_issues"),
-        "coverage": body.get("coverage"),
-        "excluded": {
-            "constraints": constraints_excluded,
-            "objectives": objectives_excluded,
-            "parameters": parameters_excluded,
-            "entities": entities_excluded,
-            "decision_variables": variables_excluded,
-        },
+        "entities": partitioned["entities"]["active"],
+        "parameters": partitioned["parameters"]["active"],
+        "decision_variables": partitioned["decision_variables"]["active"],
+        "constraints": partitioned["constraints"]["active"],
+        "objectives": partitioned["objectives"]["active"],
+        "assumptions": partitioned["assumptions"]["active"],
+        "unknowns": partitioned["unknowns"]["active"],
+        "conflicts": partitioned["conflicts"]["active"],
+        "readiness_issues": [
+            item.get("effective_statement") or item.get("original_statement")
+            for item in partitioned["readiness_issues"]["active"]
+        ],
+        "coverage": coverage,
+        "excluded": {field: partitioned[field]["excluded"] for field in PARTITION_FIELDS},
         "unresolved": {
-            "constraints": constraints_unresolved,
-            "objectives": objectives_unresolved,
-            "parameters": parameters_unresolved,
-            "entities": entities_unresolved,
-            "decision_variables": variables_unresolved,
-            "critical_claim_keys": critical_unresolved,
+            **{field: partitioned[field]["unresolved"] for field in PARTITION_FIELDS},
+            "critical_claim_keys": [key for key in critical_unresolved if key],
         },
-        "original_draft": {
-            "entities": body.get("entities"),
-            "parameters": body.get("parameters"),
-            "decision_variables": body.get("decision_variables"),
-            "constraints": body.get("constraints"),
-            "objectives": body.get("objectives"),
-        },
+        "original_draft": {field: body.get(field) for field in PARTITION_FIELDS},
         "claim_reviews": [
             {
                 "claim_key": item.get("claim_key"),
@@ -219,16 +244,31 @@ def render_markdown(draft: dict[str, Any], handoff: dict[str, Any] | None = None
     lines.extend(_section("Candidate decision variables", handoff.get("decision_variables") or [], filenames))
     lines.extend(_section("Active constraints", handoff.get("constraints") or [], filenames))
     lines.extend(_section("Active objectives", handoff.get("objectives") or [], filenames))
+    lines.extend(_section("Active assumptions", handoff.get("assumptions") or [], filenames))
     lines.extend(_section("Unknowns (not every unknown blocks every scenario)", handoff.get("unknowns") or [], filenames))
     lines.extend(_section("Conflicts", handoff.get("conflicts") or [], filenames))
+    if handoff.get("readiness_issues"):
+        lines.append("## Readiness issues")
+        lines.extend(f"- {item}" for item in handoff.get("readiness_issues") or [])
+        lines.append("")
     excluded = handoff.get("excluded") or {}
     lines.extend(_section("Excluded constraints (rejected / not applicable)", excluded.get("constraints") or [], filenames))
     lines.extend(_section("Excluded objectives (rejected / not applicable)", excluded.get("objectives") or [], filenames))
+    lines.extend(_section("Excluded assumptions", excluded.get("assumptions") or [], filenames))
+    lines.extend(_section("Excluded unknowns", excluded.get("unknowns") or [], filenames))
+    lines.extend(_section("Excluded conflicts", excluded.get("conflicts") or [], filenames))
     unresolved = handoff.get("unresolved") or {}
     if unresolved.get("critical_claim_keys"):
         lines.append("## Critical unresolved questions")
         lines.extend(f"- `{key}`" for key in unresolved["critical_claim_keys"])
         lines.append("")
+    needs = []
+    for field in PARTITION_FIELDS:
+        for item in unresolved.get(field) or []:
+            if item.get("review_status") == "needs_clarification":
+                needs.append(item)
+    if needs:
+        lines.extend(_section("Needs clarification", needs, filenames))
     lines.append("## Coverage")
     for item in handoff.get("coverage") or []:
         name = item.get("filename") or filenames.get(str(item.get("material_id") or ""), "unnamed source")
