@@ -2,7 +2,7 @@
 
 Date: 2026-09-12. Workspace: `/Users/hairen/project/lucid`.
 Branch: `cursor/stage1-recoverable-frozen-review-loop`.
-Working base: HEAD `a73052d`. A worker exit code is not product acceptance.
+Working base: HEAD `2f5bc623`. A worker exit code is not product acceptance.
 
 This is the authoritative Stage 1 delivery summary. Historical notes under `/Users/hairen/project/.tasks/` are execution records, not a second spec.
 
@@ -24,7 +24,7 @@ Not done: solver, T11–T20, a second modeling Agent, GitHub CI (not executed th
 
 ## Main files changed (this wrap-up)
 
-Backend: `api/app/modeling/runner.py`, `tools.py`, `azure_cu.py`.
+Backend: `api/app/modeling/runner.py`, `tools.py`, `azure_cu.py`, `provenance.py`.
 
 UI: `web/src/lib/sourceView.ts`, `web/src/pages/workspaces/BaselineWorkspace.tsx`, `web/src/pages/WorkbenchPage.tsx`.
 
