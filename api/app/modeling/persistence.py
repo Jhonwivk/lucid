@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from ..db import connect, utc_now
+from ..db import connect, get_data_dir, utc_now
 from .. import ingest, store
 from ..schemas import RuleIn, UnderstandingCreate
 from .draft import ModelingDraft
@@ -27,11 +28,57 @@ RUN_STATUSES = (
 )
 TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 ACTIVE_WORKER_STATUSES = frozenset({"queued", "running"})
+ACTIVE_RUN_STATUSES = frozenset({"queued", "running", "waiting_for_user"})
+WRITABLE_RUN_STATUSES = ACTIVE_RUN_STATUSES
 HEARTBEAT_STALE_SECONDS = 120
+ACTIVE_RUN_CONFLICT = "an active modeling run already exists for this analysis"
 
 
 class StaleRunError(store.ConflictError):
     pass
+
+
+def _row_status(row: Any) -> str:
+    if isinstance(row, dict):
+        return str(row.get("status") or "")
+    return str(row["status"])
+
+
+def _row_flag(row: Any, key: str) -> Any:
+    if isinstance(row, dict):
+        return row.get(key)
+    keys = row.keys()
+    return row[key] if key in keys else None
+
+
+def run_is_writable(row: Any) -> bool:
+    """Queued/running/waiting_for_user may accept worker writes; terminal/timeout may not."""
+    status = _row_status(row)
+    if status not in WRITABLE_RUN_STATUSES:
+        return False
+    if _row_flag(row, "cancel_requested"):
+        return False
+    if _row_flag(row, "error_code") == "timeout":
+        return False
+    if status in ACTIVE_WORKER_STATUSES:
+        deadline = _row_flag(row, "wall_deadline_at")
+        if deadline and str(deadline) < utc_now():
+            return False
+    return True
+
+
+def _require_writable_run(row: Any, *, action: str) -> None:
+    if row is None:
+        raise store.NotFoundError("modeling run not found")
+    if not run_is_writable(row):
+        status = _row_status(row)
+        raise StaleRunError(f"{status} run cannot {action}")
+
+
+def _discard_snapshot_dir(run_id: str) -> None:
+    from .snapshot import SNAPSHOT_ROOT
+
+    shutil.rmtree(get_data_dir() / SNAPSHOT_ROOT / run_id, ignore_errors=True)
 
 
 def _new_id() -> str:
@@ -95,9 +142,23 @@ def create_run(
     now = utc_now()
     stale_copy = bool(snapshot.get("copy_failures"))
     conn = connect()
+    previous_isolation = conn.isolation_level
     try:
-        with conn:
+        conn.isolation_level = None
+        conn.execute("BEGIN IMMEDIATE")
+        try:
             store._require_project(conn, project_id)
+            existing = conn.execute(
+                """
+                SELECT id, status FROM modeling_run
+                WHERE project_id = ?
+                  AND status IN ('queued','running','waiting_for_user')
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            if existing is not None:
+                raise store.ConflictError(ACTIVE_RUN_CONFLICT)
             conn.execute(
                 """
                 INSERT INTO modeling_run (
@@ -160,8 +221,19 @@ def create_run(
                         now,
                     ),
                 )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         return get_run(run_id)
+    except sqlite3.IntegrityError as exc:
+        _discard_snapshot_dir(run_id)
+        raise store.ConflictError(ACTIVE_RUN_CONFLICT) from exc
+    except store.ConflictError:
+        _discard_snapshot_dir(run_id)
+        raise
     finally:
+        conn.isolation_level = previous_isolation
         conn.close()
 
 
@@ -232,7 +304,7 @@ def list_runs(project_id: str) -> list[dict[str, Any]]:
             """
             SELECT * FROM modeling_run
             WHERE project_id = ?
-            ORDER BY created_at DESC, id
+            ORDER BY updated_at DESC, created_at DESC, id DESC
             """,
             (project_id,),
         ).fetchall()
@@ -277,7 +349,7 @@ def touch_heartbeat(run_id: str) -> None:
 
 def mark_stale_input(run_id: str, *, reason: str) -> dict[str, Any]:
     run = get_run(run_id)
-    append_event(run_id, kind="status", title="stale_input", detail=reason)
+    append_event(run_id, kind="status", title="stale_input", detail=reason, allow_terminal=True)
     if run["stale_input"]:
         return get_run(run_id)
     return update_run(run_id, stale_input=True)
@@ -471,13 +543,17 @@ def append_event(
     title: str,
     detail: str | None = None,
     payload: dict[str, Any] | None = None,
+    allow_terminal: bool = False,
 ) -> None:
     conn = connect()
     try:
         with conn:
-            run = conn.execute("SELECT project_id FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
+            run = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
             if run is None:
                 raise store.NotFoundError("modeling run not found")
+            writable = run_is_writable(run)
+            if not writable and not allow_terminal:
+                raise StaleRunError(f"{run['status']} run cannot accept further events")
             conn.execute(
                 """
                 INSERT INTO modeling_run_event (
@@ -495,10 +571,11 @@ def append_event(
                     utc_now(),
                 ),
             )
-            conn.execute(
-                "UPDATE modeling_run SET heartbeat_at = ?, updated_at = ? WHERE id = ?",
-                (utc_now(), utc_now(), run_id),
-            )
+            if writable:
+                conn.execute(
+                    "UPDATE modeling_run SET heartbeat_at = ?, updated_at = ? WHERE id = ?",
+                    (utc_now(), utc_now(), run_id),
+                )
     finally:
         conn.close()
 
@@ -566,6 +643,8 @@ def update_run(run_id: str, **fields: Any) -> dict[str, Any]:
                     values,
                 )
         return get_run(run_id)
+    except sqlite3.IntegrityError as exc:
+        raise store.ConflictError(ACTIVE_RUN_CONFLICT) from exc
     finally:
         conn.close()
 
@@ -620,6 +699,57 @@ def request_cancel(run_id: str) -> dict[str, Any]:
         conn.close()
 
 
+def mark_run_failed(
+    run_id: str,
+    *,
+    error_code: str,
+    error_message: str,
+    event_title: str,
+    event_detail: str | None = None,
+    event_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """CAS-fail a writable run and record the terminal event in the same transaction."""
+    conn = connect()
+    try:
+        with conn:
+            row = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
+            if row is None:
+                raise store.NotFoundError("modeling run not found")
+            if row["status"] in TERMINAL_STATUSES:
+                raise StaleRunError(f"{row['status']} run cannot accept further model output")
+            now = utc_now()
+            cursor = conn.execute(
+                """
+                UPDATE modeling_run
+                SET status = 'failed', error_code = ?, error_message = ?,
+                    finished_at = ?, updated_at = ?
+                WHERE id = ? AND status NOT IN ('completed','failed','cancelled')
+                """,
+                (error_code, error_message, now, now, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise StaleRunError("run already left a writable status")
+            conn.execute(
+                """
+                INSERT INTO modeling_run_event (
+                    id, run_id, project_id, kind, title, detail, payload_json, created_at
+                ) VALUES (?, ?, ?, 'status', ?, ?, ?, ?)
+                """,
+                (
+                    _new_id(),
+                    run_id,
+                    row["project_id"],
+                    event_title,
+                    event_detail or error_message,
+                    None if event_payload is None else _dump(event_payload),
+                    now,
+                ),
+            )
+        return get_run(run_id)
+    finally:
+        conn.close()
+
+
 def increment_tool_count(run_id: str) -> int:
     conn = connect()
     try:
@@ -628,16 +758,7 @@ def increment_tool_count(run_id: str) -> int:
                 "SELECT * FROM modeling_run WHERE id = ?",
                 (run_id,),
             ).fetchone()
-            if row is None:
-                raise store.NotFoundError("modeling run not found")
-            if row["cancel_requested"] or row["status"] == "cancelled":
-                raise StaleRunError("run cancelled")
-            if row["status"] in {"failed", "completed"}:
-                raise StaleRunError("stale run cannot accept further tool writes")
-            keys = set(row.keys())
-            deadline = row["wall_deadline_at"] if "wall_deadline_at" in keys else None
-            if deadline and deadline < utc_now():
-                raise StaleRunError("wall time exhausted")
+            _require_writable_run(row, action="accept further tool writes")
             nxt = int(row["tool_call_count"]) + 1
             if nxt > int(row["max_tool_calls"]):
                 raise StaleRunError("tool budget exhausted")
@@ -655,10 +776,9 @@ def update_coverage(run_id: str, material_id: str, **changes: Any) -> None:
     try:
         with conn:
             row = conn.execute(
-                "SELECT coverage_json FROM modeling_run WHERE id = ?", (run_id,)
+                "SELECT * FROM modeling_run WHERE id = ?", (run_id,)
             ).fetchone()
-            if row is None:
-                raise store.NotFoundError("modeling run not found")
+            _require_writable_run(row, action="update coverage")
             coverage = _load(row["coverage_json"], [])
             found = False
             for item in coverage:
@@ -1032,8 +1152,7 @@ def save_draft(run_id: str, draft: ModelingDraft, *, completeness: str | None = 
         payload["completeness"] = completeness
         draft = ModelingDraft.model_validate(payload)
     run = get_run(run_id)
-    if run["status"] in {"cancelled", "failed"}:
-        raise StaleRunError(f"{run['status']} run cannot publish a draft")
+    _require_writable_run(run, action="publish a draft")
     if run["cancel_requested"]:
         raise StaleRunError("cancelled run cannot publish a draft")
     if run["stale_input"]:

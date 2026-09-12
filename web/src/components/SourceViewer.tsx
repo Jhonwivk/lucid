@@ -3,6 +3,7 @@ import { getMaterialPreview, materialContentUrl } from '../api/client'
 import type { Material, MaterialPreview, SourceSpan } from '../api/types'
 import { useI18n, type Translate } from '../i18n'
 import { formatTimestamp, locatorKindLabel, materialKindLabel } from '../lib/format'
+import { previewMatchesRequest } from '../lib/sourceView'
 import { Quantity } from './NullValue'
 
 function locatorCopy(precision: string | undefined, t: Translate): string {
@@ -64,6 +65,7 @@ export function SourceViewer({ projectId, material, spans, highlight, runId }: S
       sheet: highlight?.sheet,
       cell: highlight?.cell,
       runId,
+      checksum: material.checksum,
     })
       .then((payload) => {
         if (!cancelled && key === requestKey) {
@@ -86,10 +88,7 @@ export function SourceViewer({ projectId, material, spans, highlight, runId }: S
     return <div className="source-viewer empty">{t('selectSource')}</div>
   }
 
-  const previewMatches =
-    preview != null &&
-    (preview.material?.id === material.id) &&
-    (!runId || preview.content_url?.includes(runId) || preview.frozen)
+  const previewMatches = previewMatchesRequest(preview, material, runId ?? null)
   const media = material.media_type ?? ''
   const contentUrl = previewMatches
     ? (preview?.content_url ?? materialContentUrl(projectId, material.id, runId))
@@ -115,7 +114,7 @@ export function SourceViewer({ projectId, material, spans, highlight, runId }: S
   const shownPage = highlight?.page ?? (typeof preview?.locator?.page === 'number' ? preview.locator.page : null)
   const region = (highlight?.region ?? preview?.locator?.region) as Record<string, unknown> | null | undefined
   const snapshot = preview?.snapshot
-  const frozen = Boolean(runId) || Boolean(preview?.frozen) || Boolean(snapshot?.frozen)
+  const frozen = Boolean(runId)
 
   return (
     <section className="source-viewer" aria-label={t('sourceViewer')}>

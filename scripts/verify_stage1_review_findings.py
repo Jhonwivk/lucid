@@ -30,7 +30,8 @@ for key in (
     "AZURE_CONTENT_UNDERSTANDING_API_KEY",
     "AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID",
 ):
-    os.environ.pop(key, None)
+    # Keep the names present so optional dotenv cannot refill live keys.
+    os.environ[key] = ""
 
 
 def expect(condition: bool, message: str) -> None:

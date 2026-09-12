@@ -12,8 +12,11 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,7 +35,8 @@ for key in (
     "AZURE_CONTENT_UNDERSTANDING_API_KEY",
     "AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID",
 ):
-    os.environ.pop(key, None)
+    # Keep the names present so optional dotenv cannot refill live keys.
+    os.environ[key] = ""
 
 
 def expect(condition: bool, message: str) -> None:
@@ -549,6 +553,448 @@ def main() -> None:
     expired = persistence.get_run(stale_hb["id"])
     expect(expired["status"] == "failed", expired)
     expect(expired["error_code"] in {"worker_lost", "timeout"}, expired)
+
+    # --- One active run per project: dual create_run + HTTP POST + two workers ---
+    lock_project = store.create_project(ProjectCreate(title="One active run"))
+    ingest.ingest_direct_text(lock_project["id"], "Only one worker may model this analysis.", label="Policy")
+
+    def try_create():
+        try:
+            created = persistence.create_run(
+                lock_project["id"],
+                question="What is the overtime rule?",
+                live_execution=False,
+                model_configured=False,
+                azure_configured=False,
+            )
+            return ("ok", created["id"])
+        except store.ConflictError:
+            return ("conflict", None)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_c = pool.submit(try_create)
+        second_c = pool.submit(try_create)
+        create_outcomes = [first_c.result(), second_c.result()]
+    expect(sum(1 for item in create_outcomes if item[0] == "ok") == 1, create_outcomes)
+    expect(sum(1 for item in create_outcomes if item[0] == "conflict") == 1, create_outcomes)
+    winner_id = next(item[1] for item in create_outcomes if item[0] == "ok")
+    listed_active = [
+        item for item in persistence.list_runs(lock_project["id"])
+        if item["status"] in {"queued", "running", "waiting_for_user"}
+    ]
+    expect(len(listed_active) == 1, listed_active)
+    expect(listed_active[0]["id"] == winner_id, listed_active)
+    conflict_http = client.post(
+        f"/api/projects/{lock_project['id']}/modeling-runs",
+        json={"question": "A second concurrent modeling request?"},
+    )
+    expect(conflict_http.status_code == 409, conflict_http.text)
+    persistence.update_run(winner_id, status="failed", error_code="test_cleanup", finished_at=utc_now())
+
+    hold_project = store.create_project(ProjectCreate(title="Two worker race"))
+    ingest.ingest_direct_text(hold_project["id"], "Owner is unnamed.", label="Gap")
+    hold_run = persistence.create_run(
+        hold_project["id"],
+        question="Who approves overtime?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+    )
+
+    class HoldThenSubmit(AdaptiveScriptModel):
+        started: threading.Event = None  # type: ignore[assignment]
+        proceed: threading.Event = None  # type: ignore[assignment]
+
+        model_config = {"arbitrary_types_allowed": True}
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            object.__setattr__(self, "started", threading.Event())
+            object.__setattr__(self, "proceed", threading.Event())
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            from langchain_core.messages import ToolMessage
+
+            names = [item.name for item in messages if isinstance(item, ToolMessage)]
+            if "inspect_evidence" in names and not self._submitted:
+                self.started.set()
+                self.proceed.wait(30)
+            return AdaptiveScriptModel._generate(self, messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    hold_model = HoldThenSubmit()
+    runner._models[hold_run["id"]] = hold_model
+
+    def try_spawn():
+        try:
+            runner._spawn(hold_run["id"], None)
+            return "ok"
+        except store.ConflictError:
+            return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        spawn_a = pool.submit(try_spawn)
+        spawn_b = pool.submit(try_spawn)
+        spawn_outcomes = [spawn_a.result(), spawn_b.result()]
+    expect(spawn_outcomes.count("ok") == 1, spawn_outcomes)
+    expect(spawn_outcomes.count("conflict") == 1, spawn_outcomes)
+    expect(hold_model.started.wait(20), "worker should start inspect")
+    hold_model.proceed.set()
+    finished_hold = runner.wait_for_run(hold_run["id"], timeout=60)
+    expect(finished_hold["status"] in {"partial", "completed", "waiting_for_user", "failed"}, finished_hold)
+
+    start_project = store.create_project(ProjectCreate(title="Dual start_run"))
+    ingest.ingest_direct_text(start_project["id"], "Capacity is 12 seats.", label="Policy")
+    start_a = HoldThenSubmit()
+    start_b = HoldThenSubmit()
+
+    def try_start(model):
+        try:
+            started = runner.start_run(start_project["id"], "How should we staff?", model=model)
+            return ("ok", started["id"])
+        except store.ConflictError:
+            return ("conflict", None)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        s1 = pool.submit(try_start, start_a)
+        s2 = pool.submit(try_start, start_b)
+        start_outcomes = [s1.result(), s2.result()]
+    expect(sum(1 for item in start_outcomes if item[0] == "ok") == 1, start_outcomes)
+    expect(sum(1 for item in start_outcomes if item[0] == "conflict") == 1, start_outcomes)
+    start_a.proceed.set()
+    start_b.proceed.set()
+    winner_start = next(item[1] for item in start_outcomes if item[0] == "ok")
+    runner.wait_for_run(winner_start, timeout=60)
+
+    # --- latest run ordering: updated_at DESC, then created_at DESC, then id ---
+    order_project = store.create_project(ProjectCreate(title="Run order"))
+    ingest.ingest_direct_text(order_project["id"], "Ordering evidence.", label="Note")
+    older = persistence.create_run(
+        order_project["id"],
+        question="First?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+    )
+    persistence.update_run(older["id"], status="failed", error_code="test_cleanup", finished_at=utc_now())
+    time.sleep(0.02)
+    newer = persistence.create_run(
+        order_project["id"],
+        question="Second?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+    )
+    persistence.update_run(newer["id"], status="failed", error_code="test_cleanup", finished_at=utc_now())
+    persistence.update_run(older["id"], stale_input=True)
+    ordered = persistence.list_runs(order_project["id"])
+    expect(ordered[0]["id"] == older["id"], "updated_at DESC must outrank created_at")
+
+    # --- Provenance: quote in the same span but not in the given offset ---
+    quote_project = store.create_project(ProjectCreate(title="Quote offset"))
+    quote_src = ingest.ingest_direct_text(
+        quote_project["id"],
+        "Capacity must not exceed 12 seats on the day shift.",
+        label="Policy",
+    )
+    quote_run = persistence.create_run(
+        quote_project["id"],
+        question="What is the capacity rule?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+        question_material_id=quote_src["material"]["id"],
+    )
+    quote_checksum = quote_src["material"]["checksum"]
+    quote_span = quote_src["spans"][0]["id"]
+    quote_text = "Capacity must not exceed 12 seats on the day shift."
+    quote = "Capacity must not exceed 12 seats"
+    wrong_start = quote_text.index("day shift")
+    wrong_end = len(quote_text)
+
+    def reject_quote(draft, needle: str) -> None:
+        try:
+            persistence.save_draft(quote_run["id"], draft)
+            raise SystemExit(f"FAIL: expected rejection containing {needle!r}")
+        except ValueError as exc:
+            expect(needle in str(exc), str(exc))
+            expect("failed run cannot publish" not in str(exc), str(exc))
+
+    reject_quote(
+        _draft(
+            quote_run,
+            constraints=[
+                {
+                    "claim_key": "c-1",
+                    "strength": "hard",
+                    "original_statement": "Quote exists but not in this offset",
+                    "evidence_refs": [
+                        {
+                            "material_id": quote_src["material"]["id"],
+                            "source_span_id": quote_span,
+                            "material_checksum": quote_checksum,
+                            "precision": "exact",
+                            "coordinate_system": "original_text",
+                            "start_offset": wrong_start,
+                            "end_offset": wrong_end,
+                            "quote": quote,
+                        }
+                    ],
+                }
+            ],
+        ),
+        "c-1[0]",
+    )
+    reject_quote(
+        _draft(
+            quote_run,
+            constraints=[
+                {
+                    "claim_key": "c-1",
+                    "strength": "hard",
+                    "original_statement": "Span has no page",
+                    "evidence_refs": [
+                        {
+                            "material_id": quote_src["material"]["id"],
+                            "source_span_id": quote_span,
+                            "material_checksum": quote_checksum,
+                            "precision": "exact",
+                            "coordinate_system": "original_text",
+                            "page": 1,
+                            "quote": quote,
+                        }
+                    ],
+                }
+            ],
+        ),
+        "c-1[0]",
+    )
+    persistence.upsert_analysis(
+        quote_project["id"],
+        quote_src["material"]["id"],
+        {
+            "material_checksum": quote_checksum,
+            "provider": "azure_content_understanding",
+            "analyzer_id": "prebuilt-document",
+            "operation_id": "op-real",
+            "status": "succeeded",
+            "derived_markdown": "Derived: Capacity must not exceed 12 seats on the day shift.",
+        },
+    )
+    reject_quote(
+        _draft(
+            quote_run,
+            constraints=[
+                {
+                    "claim_key": "c-1",
+                    "strength": "hard",
+                    "original_statement": "Azure identity mismatch",
+                    "evidence_refs": [
+                        {
+                            "material_id": quote_src["material"]["id"],
+                            "material_checksum": quote_checksum,
+                            "precision": "exact",
+                            "coordinate_system": "azure_markdown",
+                            "quote": "Capacity must not exceed 12 seats",
+                            "provider_locator": {
+                                "analyzer_id": "prebuilt-document",
+                                "operation_id": "op-forged",
+                            },
+                        }
+                    ],
+                }
+            ],
+        ),
+        "c-1[0]",
+    )
+
+    # --- Snapshot preview after live delete; missing snapshot falls back to live ---
+    from PIL import Image
+
+    mix_project = store.create_project(ProjectCreate(title="Snapshot kinds"))
+    text_imp = ingest.ingest_direct_text(mix_project["id"], "Original frozen overtime rule: max 8 hours.", label="Policy")
+    pdf_path = ROOT / "fixtures" / "templates" / "training-schedule" / "leadership-memo.pdf"
+    pdf_imp = ingest.ingest_bytes(mix_project["id"], "memo.pdf", pdf_path.read_bytes())
+    csv_imp = ingest.ingest_bytes(
+        mix_project["id"],
+        "grid.csv",
+        b"sheet,cell,value\nShifts,B2,12 seats\n",
+    )
+    png_buf = BytesIO()
+    Image.new("RGB", (16, 12), (40, 80, 90)).save(png_buf, format="PNG")
+    png_imp = ingest.ingest_bytes(mix_project["id"], "plant.png", png_buf.getvalue())
+    mix_run = persistence.create_run(
+        mix_project["id"],
+        question="Show frozen sources?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+        question_material_id=text_imp["material"]["id"],
+    )
+    mix_ids = {
+        "text": text_imp["material"]["id"],
+        "pdf": pdf_imp["material"]["id"],
+        "table": csv_imp["material"]["id"],
+        "image": png_imp["material"]["id"],
+    }
+    expected_media = {
+        "text": text_imp["material"]["media_type"],
+        "pdf": "application/pdf",
+        "table": csv_imp["material"]["media_type"],
+        "image": "image/png",
+    }
+    expected_kind = {
+        "text": text_imp["material"]["kind"],
+        "pdf": pdf_imp["material"]["kind"],
+        "table": "table",
+        "image": "image",
+    }
+    for key, material_id in mix_ids.items():
+        packed = get_snapshot_material(mix_run, material_id)
+        expect(packed and packed.get("snapshot_path") and packed.get("checksum"), packed)
+        expect(packed.get("kind") == expected_kind[key], packed)
+        expect(packed.get("media_type") == expected_media[key] or expected_media[key] in str(packed.get("media_type")), packed)
+        expect(packed.get("role") == "original", packed)
+        live = live_material_file(mix_project["id"], store.get_material(mix_project["id"], material_id))
+        expect(live is not None and live.is_file(), f"live {key} exists")
+        live.unlink()
+        preview = client.get(f"/api/modeling-runs/{mix_run['id']}/materials/{material_id}/preview")
+        expect(preview.status_code == 200, f"{key} snapshot preview {preview.status_code} {preview.text}")
+        body = preview.json()
+        expect(body["material"]["id"] == material_id, body["material"])
+        expect(body["frozen"] is True, body)
+        expect(mix_run["id"] in (body.get("content_url") or ""), body.get("content_url"))
+        expect(body["snapshot"]["checksum"] == packed["checksum"], body["snapshot"])
+        expect((body["material"].get("kind") or packed["kind"]) == packed["kind"], body["material"])
+        content = client.get(f"/api/modeling-runs/{mix_run['id']}/materials/{material_id}/content")
+        expect(content.status_code == 200, f"{key} snapshot content {content.status_code}")
+        live_preview = client.get(f"/api/projects/{mix_project['id']}/materials/{material_id}/preview")
+        expect(live_preview.status_code in {404, 409, 500} or live_preview.status_code >= 400, f"deleted live {key} must not succeed as frozen")
+        wrong = client.get(
+            f"/api/modeling-runs/{mix_run['id']}/materials/{material_id}/preview",
+            params={"checksum": "0" * 64},
+        )
+        expect(wrong.status_code == 409, f"{key} checksum mismatch {wrong.status_code} {wrong.text}")
+
+    # UI helper contract: runId only when snapshot identity is valid.
+    def has_valid_snapshot_identity(item: dict) -> bool:
+        return bool(item.get("snapshot_path") and item.get("checksum") and not item.get("copy_error"))
+
+    snap_text = get_snapshot_material(mix_run, mix_ids["text"])
+    expect(has_valid_snapshot_identity(snap_text), snap_text)
+    missing_identity = {**snap_text, "snapshot_path": None}
+    expect(not has_valid_snapshot_identity(missing_identity), missing_identity)
+    stripped = json.loads(json.dumps(mix_run["snapshot"]))
+    for item in stripped["materials"]:
+        if item["id"] == mix_ids["text"]:
+            item["snapshot_path"] = None
+            item["copy_error"] = "source_bytes_missing"
+    persistence.replace_snapshot(mix_run["id"], stripped)
+    missing_preview = client.get(f"/api/modeling-runs/{mix_run['id']}/materials/{mix_ids['text']}/preview")
+    expect(missing_preview.status_code == 404, missing_preview.text)
+
+    fallback_project = store.create_project(ProjectCreate(title="Live fallback"))
+    fallback_src = ingest.ingest_direct_text(
+        fallback_project["id"],
+        "Live bytes remain when the snapshot identity is missing.",
+        label="Live",
+    )
+    fallback_run = persistence.create_run(
+        fallback_project["id"],
+        question="Fallback to live preview?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+        question_material_id=fallback_src["material"]["id"],
+    )
+    fallback_snap = json.loads(json.dumps(fallback_run["snapshot"]))
+    for item in fallback_snap["materials"]:
+        item["snapshot_path"] = None
+        item["copy_error"] = "source_bytes_missing"
+    persistence.replace_snapshot(fallback_run["id"], fallback_snap)
+    expect(
+        not has_valid_snapshot_identity(get_snapshot_material(persistence.get_run(fallback_run["id"]), fallback_src["material"]["id"])),
+        "UI must not pass runId without snapshot identity",
+    )
+    snap_missing = client.get(
+        f"/api/modeling-runs/{fallback_run['id']}/materials/{fallback_src['material']['id']}/preview"
+    )
+    expect(snap_missing.status_code == 404, snap_missing.text)
+    live_fallback = client.get(
+        f"/api/projects/{fallback_project['id']}/materials/{fallback_src['material']['id']}/preview"
+    )
+    expect(live_fallback.status_code == 200, live_fallback.text)
+    live_body = live_fallback.json()
+    expect(live_body["material"]["id"] == fallback_src["material"]["id"], live_body)
+    expect("/modeling-runs/" not in (live_body.get("content_url") or ""), live_body.get("content_url"))
+    expect("Live bytes remain" in (live_body.get("excerpt") or ""), live_body.get("excerpt"))
+
+    # --- Timeout late graph/tool activity must not write ---
+    late_project = store.create_project(ProjectCreate(title="Late timeout"))
+    late_src = ingest.ingest_direct_text(late_project["id"], "Timeout must not publish a draft.", label="Note")
+    late_model = HoldThenSubmit()
+    late_run = runner.start_run(
+        late_project["id"],
+        "Should timeout remain failed?",
+        model=late_model,
+        max_wall_seconds=180,
+    )
+    expect(late_model.started.wait(20), "late worker should start")
+    past = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    persistence.update_run(late_run["id"], wall_deadline_at=past)
+    timed = None
+    until = time.time() + 10
+    while time.time() < until:
+        timed = persistence.get_run(late_run["id"])
+        if timed["status"] == "failed" and timed["error_code"] == "timeout":
+            break
+        time.sleep(0.2)
+    expect(timed is not None and timed["status"] == "failed", timed)
+    expect(timed["error_code"] == "timeout", timed)
+    blob = json.dumps(timed.get("events") or []) + " " + str(timed.get("error_message") or "")
+    expect(
+        "timeout" in blob.lower() or "timed out" in blob.lower() or "wall time" in blob.lower(),
+        blob,
+    )
+    before_events = len(timed.get("events") or [])
+    before_drafts = list(timed.get("drafts") or [])
+    before_coverage = json.dumps(timed.get("coverage") or [])
+    try:
+        persistence.increment_tool_count(late_run["id"])
+        raise SystemExit("FAIL: increment_tool_count after timeout")
+    except persistence.StaleRunError:
+        pass
+    try:
+        persistence.update_coverage(late_run["id"], late_src["material"]["id"], state="analyzed", detail="late")
+        raise SystemExit("FAIL: update_coverage after timeout")
+    except persistence.StaleRunError:
+        pass
+    try:
+        persistence.append_event(late_run["id"], kind="tool_call", title="late tool")
+        raise SystemExit("FAIL: append_event after timeout")
+    except persistence.StaleRunError:
+        pass
+    try:
+        persistence.save_draft(late_run["id"], _draft(timed))
+        raise SystemExit("FAIL: save_draft after timeout")
+    except persistence.StaleRunError:
+        pass
+    try:
+        persistence.update_run(late_run["id"], status="completed", finished_at=utc_now())
+        raise SystemExit("FAIL: completed after timeout")
+    except persistence.StaleRunError:
+        pass
+    late_model.proceed.set()
+    try:
+        runner.wait_for_run(late_run["id"], timeout=20)
+    except TimeoutError:
+        pass
+    after_late = persistence.get_run(late_run["id"])
+    expect(after_late["status"] == "failed", after_late)
+    expect(after_late["error_code"] == "timeout", after_late)
+    expect(list(after_late.get("drafts") or []) == before_drafts, after_late.get("drafts"))
+    expect(json.dumps(after_late.get("coverage") or []) == before_coverage, after_late.get("coverage"))
+    expect(len(after_late.get("events") or []) == before_events, after_late.get("events"))
+    expect(not any("Submitted" in str(item.get("title")) for item in after_late.get("events") or []), after_late.get("events"))
 
     print("PASS: stage1 recovery/snapshot/provenance/export/state-machine")
     print(f"isolated_data_dir={TMP}")

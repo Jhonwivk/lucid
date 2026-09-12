@@ -231,14 +231,12 @@ def _snapshot_text(run: dict[str, Any], material: dict[str, Any]) -> str | None:
 
 def _derived_markdown(run: dict[str, Any], material: dict[str, Any], ref: EvidenceRef) -> dict[str, Any] | None:
     from . import persistence
-    from ..runtime_config import azure_settings
 
-    analyzer = None
-    operation_id = None
-    if isinstance(ref.provider_locator, dict):
-        analyzer = ref.provider_locator.get("analyzer_id")
-        operation_id = ref.provider_locator.get("operation_id")
-    analyzer = analyzer or azure_settings()["analyzer_id"] or "prebuilt-document"
+    locator = ref.provider_locator if isinstance(ref.provider_locator, dict) else {}
+    analyzer = locator.get("analyzer_id")
+    operation_id = locator.get("operation_id")
+    if not analyzer or not operation_id:
+        return None
     cached = persistence.get_cached_analysis(
         material["id"],
         material.get("checksum"),
@@ -247,9 +245,70 @@ def _derived_markdown(run: dict[str, Any], material: dict[str, Any], ref: Eviden
     )
     if cached is None:
         return None
-    if operation_id and cached.get("operation_id") and cached.get("operation_id") != operation_id:
+    if str(cached.get("analyzer_id") or "") != str(analyzer):
+        return None
+    if str(cached.get("operation_id") or "") != str(operation_id):
+        return None
+    if not cached.get("material_checksum") or cached.get("material_checksum") != ref.material_checksum:
+        return None
+    if not cached.get("derived_markdown"):
         return None
     return cached
+
+
+def _locator_consistency_error(ref: EvidenceRef, chosen: dict[str, Any] | None) -> str | None:
+    if ref.page is not None:
+        if chosen is None or chosen.get("page") is None:
+            return "page is claimed but the snapshot span has no page"
+        if chosen.get("page") != ref.page:
+            return "page does not match the source span"
+    if ref.sheet:
+        if chosen is None or not chosen.get("sheet"):
+            return "sheet is claimed but the snapshot span has no sheet"
+        if str(chosen.get("sheet")).casefold() != ref.sheet.casefold():
+            return "sheet does not match the source span"
+    if ref.cell_ref:
+        if chosen is None or not chosen.get("cell_ref"):
+            return "cell_ref is claimed but the snapshot span has no cell_ref"
+        if str(chosen.get("cell_ref")).casefold() != ref.cell_ref.casefold():
+            return "cell_ref does not match the source span"
+    if ref.region:
+        if chosen is None or not chosen.get("region"):
+            return "region is claimed but the snapshot span has no region"
+        if _region_key(chosen.get("region")) != _region_key(ref.region):
+            return "region does not match the source span"
+    return None
+
+
+def _exact_quote_error(run: dict[str, Any], material: dict[str, Any], ref: EvidenceRef, chosen: dict[str, Any] | None) -> str | None:
+    if not (ref.quote and ref.precision == "exact"):
+        return None
+    if ref.start_offset is not None and ref.end_offset is not None:
+        slice_text: str | None = None
+        text = _snapshot_text(run, material)
+        if text is not None:
+            slice_text = text[ref.start_offset:ref.end_offset]
+        elif chosen and chosen.get("excerpt") is not None and chosen.get("start_offset") is not None:
+            rel_start = ref.start_offset - int(chosen["start_offset"])
+            rel_end = ref.end_offset - int(chosen["start_offset"])
+            excerpt = str(chosen["excerpt"])
+            if rel_start < 0 or rel_end < rel_start or rel_end > len(excerpt):
+                return "offset range is outside the source span coordinate space"
+            slice_text = excerpt[rel_start:rel_end]
+        else:
+            return "exact offset quote cannot be verified against snapshot text"
+        if ref.quote not in slice_text:
+            return "exact quote was not found in the given offset range"
+        return None
+    haystacks: list[str] = []
+    if chosen and chosen.get("excerpt"):
+        haystacks.append(str(chosen["excerpt"]))
+    text = _snapshot_text(run, material)
+    if text:
+        haystacks.append(text)
+    if not haystacks or not any(ref.quote in haystack for haystack in haystacks):
+        return "exact quote was not found in the referenced snapshot excerpt"
+    return None
 
 
 def validate_ref(run: dict[str, Any], ref: EvidenceRef) -> str | None:
@@ -295,6 +354,10 @@ def validate_ref(run: dict[str, Any], ref: EvidenceRef) -> str | None:
             if ref.start_offset is None:
                 return "without source_span_id, page/sheet/cell_ref/region must uniquely match a snapshot span"
 
+    locator_error = _locator_consistency_error(ref, chosen)
+    if locator_error:
+        return locator_error
+
     if ref.start_offset is not None and ref.end_offset is not None:
         if ref.start_offset < 0 or ref.end_offset < ref.start_offset:
             return "offset range is invalid"
@@ -308,33 +371,22 @@ def validate_ref(run: dict[str, Any], ref: EvidenceRef) -> str | None:
             if text is not None and (ref.start_offset > len(text) or ref.end_offset > len(text)):
                 return "offset range is outside the original snapshot text"
 
-    if ref.page is not None and chosen and chosen.get("page") not in {None, ref.page}:
-        return "page does not match the source span"
-    if ref.sheet and chosen and chosen.get("sheet") and str(chosen.get("sheet")).casefold() != ref.sheet.casefold():
-        return "sheet does not match the source span"
-    if ref.cell_ref and chosen and chosen.get("cell_ref") and str(chosen.get("cell_ref")).casefold() != ref.cell_ref.casefold():
-        return "cell_ref does not match the source span"
-
     if ref.coordinate_system == "azure_markdown":
         cached = _derived_markdown(run, material, ref)
-        if cached is None or not cached.get("derived_markdown"):
+        if cached is None:
             return "azure_markdown evidence requires analyzer_id/operation_id and a persisted derived artifact"
-        if ref.precision == "exact" and ref.quote:
-            if ref.quote not in str(cached.get("derived_markdown") or ""):
+        markdown = str(cached.get("derived_markdown") or "")
+        if ref.quote and ref.precision == "exact":
+            if ref.start_offset is not None and ref.end_offset is not None:
+                if ref.quote not in markdown[ref.start_offset:ref.end_offset]:
+                    return "exact quote was not found in the given offset range"
+            elif ref.quote not in markdown:
                 return "exact quote was not found in the persisted Azure derived markdown"
         return None
 
-    if ref.quote and ref.precision == "exact":
-        haystacks: list[str] = []
-        if chosen and chosen.get("excerpt"):
-            haystacks.append(str(chosen["excerpt"]))
-        text = _snapshot_text(run, material)
-        if text:
-            if ref.start_offset is not None and ref.end_offset is not None:
-                haystacks.append(text[ref.start_offset:ref.end_offset])
-            haystacks.append(text)
-        if not haystacks or not any(ref.quote in haystack for haystack in haystacks):
-            return "exact quote was not found in the referenced snapshot excerpt"
+    quote_error = _exact_quote_error(run, material, ref, chosen)
+    if quote_error:
+        return quote_error
 
     if ref.coordinate_system == "original_text":
         media = material.get("media_type") or ""

@@ -21,7 +21,7 @@ from .states import (
     WORKFLOW_MATURITY_SQL,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = PACKAGE_ROOT.parent
 _DOTENV_LOADED = False
@@ -569,6 +569,44 @@ def _migrate_to_4(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_5(conn: sqlite3.Connection) -> None:
+    """At most one queued/running/waiting_for_user modeling run per project."""
+    rows = conn.execute(
+        """
+        SELECT id, project_id FROM modeling_run
+        WHERE status IN ('queued','running','waiting_for_user')
+        ORDER BY project_id, updated_at DESC, created_at DESC, id DESC
+        """
+    ).fetchall()
+    seen: set[str] = set()
+    now = utc_now()
+    for row in rows:
+        project_id = row["project_id"]
+        if project_id in seen:
+            conn.execute(
+                """
+                UPDATE modeling_run
+                SET status = 'failed',
+                    error_code = 'superseded_active_run',
+                    error_message = 'Closed because another active modeling run already existed for this analysis.',
+                    finished_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND status IN ('queued','running','waiting_for_user')
+                """,
+                (now, now, row["id"]),
+            )
+        else:
+            seen.add(project_id)
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_modeling_run_one_active
+            ON modeling_run(project_id)
+            WHERE status IN ('queued','running','waiting_for_user')
+        """
+    )
+
+
 def apply_migrations(conn: sqlite3.Connection) -> int:
     conn.execute(
         """
@@ -601,6 +639,11 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
         _set_meta(conn, "schema_version", "4")
         current = 4
         _set_meta(conn, "bootstrap", "stage1-review-corrections")
+    if current < 5:
+        _migrate_to_5(conn)
+        _set_meta(conn, "schema_version", "5")
+        current = 5
+        _set_meta(conn, "bootstrap", "stage1-one-active-run")
     return current
 
 

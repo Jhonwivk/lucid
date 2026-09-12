@@ -56,7 +56,7 @@ Stage 2 (not implemented): formal solver
 
 ## Persistence
 
-Schema version **4** (`app_meta.schema_version`). Modeling tables live beside existing T03 project / understanding / scenario / SolveRun rows. Migration copies existing databases; it does not wipe user rows. Checkpointer connections are rebuilt per data directory.
+Schema version **5** (`app_meta.schema_version`). Version 5 adds a partial unique index so one project can have at most one `queued` / `running` / `waiting_for_user` modeling run. Modeling tables live beside existing T03 project / understanding / scenario / SolveRun rows. Migration copies existing databases; it does not wipe user rows. Checkpointer connections are rebuilt per data directory.
 
 ## UI contract
 

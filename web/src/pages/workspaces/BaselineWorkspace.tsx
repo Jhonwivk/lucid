@@ -33,9 +33,15 @@ export function BaselineWorkspace({
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState<'md' | 'json' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
+  const [exportFailedKind, setExportFailedKind] = useState<'md' | 'json' | null>(null)
   const ordered = useMemo(() => sortBaselines(baselines), [baselines])
   const currentId = currentBaselineId || ordered[0]?.id || null
   const [selectedId, setSelectedId] = useState<string | null>(currentId)
+  const [seenCurrentId, setSeenCurrentId] = useState<string | null>(currentBaselineId ?? null)
+  if ((currentBaselineId ?? null) !== seenCurrentId) {
+    setSeenCurrentId(currentBaselineId ?? null)
+    if (currentBaselineId) setSelectedId(currentBaselineId)
+  }
   const selected = ordered.find((item) => item.id === selectedId) ?? ordered[0]
   const latestDraft = drafts[drafts.length - 1] ?? null
   const canFreeze = latestDraft && latestDraft.version_state !== 'confirmed'
@@ -59,6 +65,7 @@ export function BaselineWorkspace({
     if (!selected || exporting) return
     setExporting(kind)
     setExportError(null)
+    setExportFailedKind(null)
     try {
       const response = await fetch(`/api/baselines/${selected.id}/export.${kind}`)
       if (!response.ok) {
@@ -74,6 +81,7 @@ export function BaselineWorkspace({
       link.remove()
       URL.revokeObjectURL(url)
     } catch (err) {
+      setExportFailedKind(kind)
       setExportError(errorMessage(err))
     } finally {
       setExporting(null)
@@ -155,8 +163,15 @@ export function BaselineWorkspace({
           </div>
           {exportError ? (
             <p role="alert">
-              {t('exportFailed')} {exportError}{' '}
-              <button className="btn btn-ghost" type="button" onClick={() => void onExport('md')}>
+              {t('exportFailed')}
+              {exportFailedKind ? ` (${exportFailedKind})` : ''} {exportError}{' '}
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={exporting != null || exportFailedKind == null}
+                aria-busy={exporting != null && exporting === exportFailedKind}
+                onClick={() => exportFailedKind && void onExport(exportFailedKind)}
+              >
                 {t('retryExport')}
               </button>
             </p>

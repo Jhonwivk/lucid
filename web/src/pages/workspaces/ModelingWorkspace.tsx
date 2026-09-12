@@ -27,6 +27,11 @@ import {
   reviewLabel,
   sourceRefLabel,
 } from '../../lib/format'
+import {
+  materialFromSnapshot,
+  selectLatestModelingRun,
+  snapshotRunIdForSelection,
+} from '../../lib/sourceView'
 
 type ModelingWorkspaceProps = {
   projectId: string
@@ -40,6 +45,7 @@ type ModelingWorkspaceProps = {
 }
 
 const ACTIVE = new Set(['queued', 'running'])
+const START_BLOCKED = new Set(['queued', 'running', 'waiting_for_user'])
 const REVIEW_KINDS = [
   'constraint',
   'objective',
@@ -107,34 +113,31 @@ export function ModelingWorkspace({
   const [pinnedRunId, setPinnedRunId] = useState<string | null>(null)
   const [polledRun, setPolledRun] = useState<ModelingRun | null>(null)
   const latestFromList = useMemo(
-    () => runs.find((item) => item.id === (pinnedRunId ?? runs[0]?.id)) ?? runs[0] ?? null,
+    () => selectLatestModelingRun(runs, pinnedRunId),
     [runs, pinnedRunId],
   )
   const latestRun = polledRun && latestFromList && polledRun.id === latestFromList.id
     ? { ...latestFromList, ...polledRun }
     : latestFromList
+  const latestRunId = latestRun?.id ?? null
   const latestDraft = useMemo(() => {
-    if (!latestRun) return drafts[drafts.length - 1] ?? null
-    const forRun = drafts.filter((item) => item.run_id === latestRun.id)
+    if (!latestRunId) return drafts[drafts.length - 1] ?? null
+    const forRun = drafts.filter((item) => item.run_id === latestRunId)
     return forRun[forRun.length - 1] ?? drafts[drafts.length - 1] ?? null
-  }, [drafts, latestRun])
+  }, [drafts, latestRunId])
   const pending = latestRun?.clarifications.find((item) => item.status === 'pending') ?? null
-  const snapshotMaterials = latestRun?.snapshot?.materials ?? []
-  const selectedSnapshot = snapshotMaterials.find((item) => item.id === selectedId) ?? null
-  const selected = materials.find((item) => item.id === selectedId)
-    ?? (selectedSnapshot
-      ? {
-          ...selectedSnapshot,
-          project_id: projectId,
-          kind: 'document',
-          media_type: 'text/plain',
-          created_at: latestRun?.created_at ?? '',
-        } as Material
-      : null)
-  const selectedSpans = useMemo(
-    () => sourceSpans.filter((span) => span.material_id === selected?.id),
-    [sourceSpans, selected],
-  )
+  const snapshotMaterials = latestRun?.snapshot?.materials
+  const selectedSnapshot = snapshotMaterials?.find((item) => item.id === selectedId) ?? null
+  const liveSelected = materials.find((item) => item.id === selectedId) ?? null
+  const selected = selectedSnapshot
+    ? materialFromSnapshot(projectId, selectedSnapshot, liveSelected, latestRun?.created_at ?? '')
+    : liveSelected
+  const snapshotRunId = snapshotRunIdForSelection(latestRun, selectedId)
+  const selectedSpans = useMemo(() => {
+    const snap = snapshotMaterials?.find((item) => item.id === selectedId)
+    if (snap?.spans?.length) return snap.spans
+    return sourceSpans.filter((span) => span.material_id === selectedId)
+  }, [snapshotMaterials, selectedId, sourceSpans])
   const claims = useMemo(
     () => latestDraft?.claims.filter((claim) => REVIEW_KINDS.includes(claim.claim_kind as typeof REVIEW_KINDS[number])) ?? [],
     [latestDraft],
@@ -178,7 +181,7 @@ export function ModelingWorkspace({
 
   const modelReady = readiness.live_agent_possible
   const missingKeys = missingModelKeys(readiness)
-  const runBusy = Boolean(latestRun && ACTIVE.has(latestRun.status))
+  const runBusy = Boolean(latestRun && START_BLOCKED.has(latestRun.status))
   const canStart = !busy && !runBusy && Boolean(question.trim()) && modelReady
 
   async function onStart() {
@@ -286,7 +289,7 @@ export function ModelingWorkspace({
     kind,
     items: claims.filter((claim) => claim.claim_kind === kind),
   })).filter((group) => group.items.length > 0)
-  const sourceList = snapshotMaterials.length > 0
+  const sourceList = snapshotMaterials && snapshotMaterials.length > 0
     ? snapshotMaterials.map((item) => ({ id: item.id, filename: item.filename || t('unnamedSource') }))
     : materials.map((item) => ({ id: item.id, filename: item.filename }))
 
@@ -385,12 +388,12 @@ export function ModelingWorkspace({
             })}
           </ul>
           <SourceViewer
-            key={`${latestRun?.id ?? 'live'}-${selected?.id ?? 'none'}`}
+            key={`${snapshotRunId ?? 'live'}-${selected?.id ?? 'none'}`}
             projectId={projectId}
             material={selected}
             spans={selectedSpans}
             highlight={highlight}
-            runId={latestRun?.id ?? null}
+            runId={snapshotRunId}
           />
           <h3>{t('relatedClaims')}</h3>
           {related.length === 0 ? (

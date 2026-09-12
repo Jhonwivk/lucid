@@ -59,21 +59,15 @@ def start_run(
             max_wall_seconds=max_wall_seconds,
             question_material_id=question_material["id"],
         )
-        persistence.update_run(
+        persistence.mark_run_failed(
             run["id"],
-            status="failed",
             error_code="model_not_configured",
             error_message=(
                 "Live Agent execution is blocked. Set LUCID_MODEL_NAME, "
                 "LUCID_MODEL_BASE_URL, and LUCID_MODEL_API_KEY in lucid/.env. "
                 "This is not a successful modeling run."
             ),
-            finished_at=utc_now(),
-        )
-        persistence.append_event(
-            run["id"],
-            kind="status",
-            title="Live model is not configured",
+            event_title="Live model is not configured",
         )
         return persistence.get_run(run["id"])
     live_execution = model is None
@@ -141,39 +135,34 @@ def recover_orphaned_runs() -> list[dict[str, Any]]:
             recovered.append(expired)
             continue
         if not expired["live_execution"]:
-            persistence.update_run(
+            persistence.mark_run_failed(
                 expired["id"],
-                status="failed",
                 error_code="worker_lost",
                 error_message=(
                     "This run used an injected test double that is no longer in process. "
                     "It is not a live model run."
                 ),
-                finished_at=utc_now(),
+                event_title="Worker lost after restart",
             )
-            persistence.append_event(expired["id"], kind="status", title="Worker lost after restart")
             recovered.append(persistence.get_run(expired["id"]))
             continue
         if not live_model_available():
-            persistence.update_run(
+            persistence.mark_run_failed(
                 expired["id"],
-                status="failed",
                 error_code="model_not_configured",
                 error_message="Live model is not configured; the interrupted run cannot be recovered.",
-                finished_at=utc_now(),
+                event_title="Live model is not configured",
             )
             recovered.append(persistence.get_run(expired["id"]))
             continue
         continue_from_checkpoint = expired["status"] == "running" and has_checkpoint(expired["thread_id"])
         if expired["status"] == "running" and not continue_from_checkpoint:
-            persistence.update_run(
+            persistence.mark_run_failed(
                 expired["id"],
-                status="failed",
                 error_code="worker_lost",
                 error_message="No LangGraph checkpoint remains for this live run after restart.",
-                finished_at=utc_now(),
+                event_title="Worker lost after restart",
             )
-            persistence.append_event(expired["id"], kind="status", title="Worker lost after restart")
             recovered.append(persistence.get_run(expired["id"]))
             continue
         try:
@@ -181,12 +170,11 @@ def recover_orphaned_runs() -> list[dict[str, Any]]:
             _spawn(expired["id"], resume="__continue__" if continue_from_checkpoint else None)
             persistence.append_event(expired["id"], kind="status", title="Recovered modeling worker after restart")
         except Exception as exc:  # noqa: BLE001
-            persistence.update_run(
+            persistence.mark_run_failed(
                 expired["id"],
-                status="failed",
                 error_code="worker_lost",
                 error_message=f"Could not recover worker ({type(exc).__name__}).",
-                finished_at=utc_now(),
+                event_title="Worker lost after restart",
             )
         recovered.append(persistence.get_run(expired["id"]))
     return recovered
@@ -229,14 +217,13 @@ def _seconds_remaining(deadline_iso: str | None) -> float:
 def _invoke_with_deadline(graph: Any, payload: Any, config: dict[str, Any], run_id: str, deadline_iso: str | None) -> Any:
     remaining = _seconds_remaining(deadline_iso)
     if remaining <= 0:
-        persistence.update_run(
+        persistence.mark_run_failed(
             run_id,
-            status="failed",
             error_code="timeout",
             error_message="Wall time exhausted before the model call. This is not a successful modeling run.",
-            finished_at=utc_now(),
+            event_title="Wall time exhausted",
+            event_payload={"error_code": "timeout"},
         )
-        persistence.append_event(run_id, kind="status", title="Wall time exhausted")
         raise persistence.StaleRunError("wall time exhausted")
     pool = ThreadPoolExecutor(max_workers=1)
     copied = contextvars.copy_context()
@@ -253,18 +240,12 @@ def _invoke_with_deadline(graph: Any, payload: Any, config: dict[str, Any], run_
                 if current["cancel_requested"] or current["status"] == "cancelled":
                     raise persistence.StaleRunError("run cancelled")
                 if remaining <= 0:
-                    persistence.update_run(
+                    persistence.mark_run_failed(
                         run_id,
-                        status="failed",
                         error_code="timeout",
                         error_message="graph.invoke() exceeded max_wall_seconds. This is not a successful modeling run.",
-                        finished_at=utc_now(),
-                    )
-                    persistence.append_event(
-                        run_id,
-                        kind="status",
-                        title="Model call timed out",
-                        payload={"error_code": "timeout"},
+                        event_title="Model call timed out",
+                        event_payload={"error_code": "timeout"},
                     )
                     raise persistence.StaleRunError("wall time exhausted")
                 persistence.touch_heartbeat(run_id)
@@ -421,7 +402,7 @@ def _execute(run_id: str, resume: str | None) -> None:
                     error_message="The Agent finished without submitting a modeling draft.",
                     finished_at=utc_now(),
                 )
-        persistence.append_event(run_id, kind="status", title="Modeling run finished")
+        persistence.append_event(run_id, kind="status", title="Modeling run finished", allow_terminal=True)
     except persistence.StaleRunError as exc:
         current = persistence.get_run(run_id)
         if current["status"] in persistence.TERMINAL_STATUSES:
@@ -453,7 +434,7 @@ def _execute(run_id: str, resume: str | None) -> None:
             error_message=f"Modeling run failed ({type(exc).__name__}).",
             finished_at=utc_now(),
         )
-        persistence.append_event(run_id, kind="status", title="Modeling run failed")
+        persistence.append_event(run_id, kind="status", title="Modeling run failed", allow_terminal=True)
     finally:
         if token is not None:
             CURRENT_RUN.reset(token)

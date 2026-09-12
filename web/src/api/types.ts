@@ -400,10 +400,18 @@ export type ModelingRun = {
     materials?: Array<{
       id: string
       filename?: string | null
-      checksum?: string | null
-      snapshot_path?: string | null
-      role?: string
+      kind?: MaterialKind | string | null
+      media_type?: string | null
       byte_size?: number | null
+      checksum?: string | null
+      notes?: string | null
+      created_at?: string
+      snapshot_path?: string | null
+      original_checksum?: string | null
+      role?: string | null
+      copy_error?: string | null
+      spans?: SourceSpan[]
+      metadata?: Record<string, unknown> | null
     }>
   } | null
 }

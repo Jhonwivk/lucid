@@ -59,7 +59,7 @@ Or from the repo root:
 - Workbench: **http://127.0.0.1:5173/analyses/:projectId/materials** (also `/modeling`, `/baseline`, `/results`; `/understanding` and `/scenarios` redirect)
 - API health: **http://127.0.0.1:8000/api/health**
 - Readiness (non-secret presence only): **http://127.0.0.1:8000/api/readiness**
-- Persistence: SQLite file `data/lucid.db` (schema 4 after Stage 1). Optional demo seed: `POST http://127.0.0.1:8000/api/dev/seed-demo`.
+- Persistence: SQLite file `data/lucid.db` (schema 5 after Stage 1 active-run lock). Optional demo seed: `POST http://127.0.0.1:8000/api/dev/seed-demo`.
 - Composer: `POST /api/analyses/start` with `{ "title", "question", "text"? }`. A non-blank question is enough.
 - Modeling: `POST /api/projects/{id}/modeling-runs`. Missing live model config fails honestly (`model_not_configured`); it does not emit a fake draft.
 - Templates (T05): `GET /api/templates` lists six bilingual fixtures. `POST /api/templates/{id}/instantiate`. UI language is `en` / `zh-CN`.

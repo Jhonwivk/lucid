@@ -38,6 +38,15 @@ from .snapshot import (
 _azure = AzureContentUnderstanding()
 
 
+def _charge_tool() -> str | None:
+    ctx = require_run()
+    try:
+        persistence.increment_tool_count(ctx.run_id)
+    except persistence.StaleRunError as exc:
+        return json.dumps({"error": "stale_run", "detail": str(exc)})
+    return None
+
+
 def set_azure_client(client: AzureContentUnderstanding) -> None:
     global _azure
     _azure = client
@@ -78,7 +87,9 @@ def _require_snapshot_material(run: dict[str, Any], material_id: str) -> dict[st
 def inspect_evidence() -> str:
     """List snapshot Materials and processing/coverage state for this run. Use project-scoped IDs only."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     run = persistence.get_run(ctx.run_id)
     coverage = {item.get("material_id"): item for item in run.get("coverage") or []}
     rows = []
@@ -136,7 +147,9 @@ def read_source(
 ) -> str:
     """Read original or stored excerpts by snapshot material/span IDs. Never pass filesystem paths or URLs."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     run = persistence.get_run(ctx.run_id)
     try:
         material = _require_snapshot_material(run, material_id)
@@ -285,7 +298,9 @@ def read_source(
 def understand_material(material_id: str) -> str:
     """Invoke or resume the single Azure Content Understanding service on one snapshot Material."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     run = persistence.get_run(ctx.run_id)
     try:
         material = _require_snapshot_material(run, material_id)
@@ -466,7 +481,9 @@ def understand_material(material_id: str) -> str:
 def ask_clarification(question: str, reason: str, affected_claim_keys: list[str] | None = None) -> str:
     """Pause for one human clarification. The answer becomes new equal-status text evidence."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     keys = affected_claim_keys or []
     clarification = persistence.ensure_clarification(
         ctx.run_id,
@@ -569,7 +586,9 @@ def ask_clarification(question: str, reason: str, affected_claim_keys: list[str]
 def submit_modeling_draft(draft: dict) -> str:
     """Submit a source-grounded modeling draft. Cannot confirm a baseline or run a solver."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     parsed = ModelingDraft.model_validate(draft)
     run = persistence.get_run(ctx.run_id)
     if run.get("stale_input"):

@@ -43,6 +43,8 @@ def start_modeling_run(project_id: str, payload: ModelingRunCreate) -> dict:
         return runner.start_run(project_id, payload.question)
     except store.NotFoundError as exc:
         raise _http_error(exc) from exc
+    except store.ConflictError as exc:
+        raise _http_error(exc) from exc
     except ValueError as exc:
         raise _http_error(exc) from exc
 
@@ -183,6 +185,11 @@ def material_content(project_id: str, material_id: str) -> FileResponse:
     )
 
 
+def _reject_checksum_mismatch(material: dict, checksum: str | None) -> None:
+    if checksum and material.get("checksum") and checksum != material.get("checksum"):
+        raise HTTPException(status_code=409, detail="material checksum does not match")
+
+
 @router.get("/api/projects/{project_id}/materials/{material_id}/preview")
 def material_preview(
     project_id: str,
@@ -192,9 +199,11 @@ def material_preview(
     page: int | None = None,
     sheet: str | None = None,
     cell_ref: str | None = None,
+    checksum: str | None = None,
 ) -> dict:
     try:
         material = store.get_material(project_id, material_id)
+        _reject_checksum_mismatch(material, checksum)
         spans = [
             span
             for span in store.list_source_spans(project_id)
@@ -216,7 +225,7 @@ def material_preview(
         page=page,
         sheet=sheet,
         cell_ref=cell_ref,
-        snapshot_meta={"frozen": False, "role": "live"},
+        snapshot_meta={"frozen": False, "role": "live", "material_id": material_id, "checksum": material.get("checksum")},
     )
 
 
@@ -227,6 +236,8 @@ def snapshot_material_content(run_id: str, material_id: str) -> FileResponse:
         material = get_snapshot_material(run, material_id)
         if material is None:
             raise store.NotFoundError("material not found in this run snapshot")
+        if not material.get("snapshot_path") or material.get("copy_error"):
+            raise store.NotFoundError("material snapshot identity is missing")
         raw = read_snapshot_bytes(run, material)
     except store.NotFoundError as exc:
         raise _http_error(exc) from exc
@@ -251,12 +262,16 @@ def snapshot_material_preview(
     page: int | None = None,
     sheet: str | None = None,
     cell_ref: str | None = None,
+    checksum: str | None = None,
 ) -> dict:
     try:
         run = persistence.get_run(run_id)
         material = get_snapshot_material(run, material_id)
         if material is None:
             raise store.NotFoundError("material not found in this run snapshot")
+        if not material.get("snapshot_path") or material.get("copy_error"):
+            raise store.NotFoundError("material snapshot identity is missing")
+        _reject_checksum_mismatch(material, checksum)
         spans = list_snapshot_spans(run, material_id)
         raw = read_snapshot_bytes(run, material)
     except store.NotFoundError as exc:

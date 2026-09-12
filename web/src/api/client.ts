@@ -306,6 +306,7 @@ export function getMaterialPreview(
     sheet?: string | null
     cell?: string | null
     runId?: string | null
+    checksum?: string | null
   },
 ): Promise<MaterialPreview> {
   const params = new URLSearchParams()
@@ -314,6 +315,7 @@ export function getMaterialPreview(
   if (opts?.page != null) params.set('page', String(opts.page))
   if (opts?.sheet) params.set('sheet', opts.sheet)
   if (opts?.cell) params.set('cell_ref', opts.cell)
+  if (opts?.checksum) params.set('checksum', opts.checksum)
   const query = params.toString()
   const suffix = query ? `?${query}` : ''
   if (opts?.runId) {
