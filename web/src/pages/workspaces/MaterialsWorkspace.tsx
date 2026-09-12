@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { EmptyState } from '../../components/EmptyState'
 import { NullValue, Quantity } from '../../components/NullValue'
 import { SourceViewer } from '../../components/SourceViewer'
-import { createDirectTextMaterial, importProjectMaterial } from '../../api/client'
+import { createDirectTextMaterial, deleteMaterial, errorMessage, importProjectMaterial } from '../../api/client'
 import type { Material, SourceSpan } from '../../api/types'
 import { useI18n, type Translate } from '../../i18n'
 import { formatTimestamp, locatorKindLabel, materialKindLabel } from '../../lib/format'
@@ -196,6 +196,16 @@ export function MaterialsWorkspace({
   const [directLabel, setDirectLabel] = useState('')
   const [textBusy, setTextBusy] = useState(false)
   const [textResult, setTextResult] = useState<IntakeRow | null>(null)
+  const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+
+  async function onDelete(materialId: string) {
+    setDeletingId(materialId); setDeleteError(null)
+    try { await deleteMaterial(projectId, materialId); setDeleteId(null); await reload() }
+    catch (err) { setDeleteError(errorMessage(err)) }
+    finally { setDeletingId(null) }
+  }
 
   function onPick(event: ChangeEvent<HTMLInputElement>) {
     const next = event.target.files ? Array.from(event.target.files) : []
@@ -370,6 +380,7 @@ export function MaterialsWorkspace({
             {materials.length} {materials.length === 1 ? t('material') : t('materialsPlural')}, {' '}
             {sourceSpans.length} {sourceSpans.length === 1 ? t('sourceSpan') : t('sourceSpans')} ({t('storedBytes')}).
           </p>
+          {deleteError ? <p role="alert">{deleteError}</p> : null}
           <SourceViewer
             projectId={projectId}
             material={materials.find((item) => item.id === selectedId) ?? materials[0]}
@@ -387,9 +398,11 @@ export function MaterialsWorkspace({
               >
                 <div className="fact-label">{materialKindLabel(material.kind, t)}</div>
                 <h3>{displayName}</h3>
+                {material.deleted_at ? <p className="notice warn">{t('materialDeleted')} · {t('materialDeletedBody')}</p> : null}
                 <button className="btn btn-ghost" type="button" onClick={() => setSelectedId(material.id)}>
                   {t('inspectPreview')}
                 </button>
+                {!material.deleted_at ? <button className="btn btn-ghost" type="button" disabled={deletingId !== null} onClick={() => deleteId === material.id ? void onDelete(material.id) : setDeleteId(material.id)}>{deletingId === material.id ? t('deletingMaterial') : deleteId === material.id ? t('confirmDeleteMaterial') : t('deleteMaterial')}</button> : null}
                 <div className="meta-row">
                   <span>{t('type')} {material.media_type ?? t('unspecified')}</span>
                   {isDirectText(material) ? <span>{t('sourceOriginDirectText')}</span> : null}

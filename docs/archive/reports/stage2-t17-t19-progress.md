@@ -1,6 +1,6 @@
 # Stage 2 T17–T19 backend progress
 
-> Historical checkpoint. Superseded by [current release status](../../status.md). This file is retained for audit context and is not a current plan.
+> Historical checkpoint. Superseded by [current release status](../../release-status.md). This file is retained for audit context and is not a current plan.
 
 The solver result boundary now preserves an auditable history instead of only
 storing a status label.

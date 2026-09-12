@@ -1,4 +1,4 @@
-# Agent and evidence architecture
+# Architecture and data flow
 
 LUCID has one semantic Agent and one deterministic solver layer. The Agent interprets evidence; it does not replace human confirmation or perform optimisation.
 

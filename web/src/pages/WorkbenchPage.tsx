@@ -117,7 +117,7 @@ export function WorkbenchPage() {
             </nav>
 
             <div className="workbench">
-              <main className="work-main">
+              <main className="work-main" key={projectId}>
                 {current === 'materials' ? (
                   <MaterialsWorkspace
                     projectId={projectId}
@@ -151,6 +151,7 @@ export function WorkbenchPage() {
                 ) : null}
                 {current === 'results' ? (
                   <ResultsWorkspace
+                    key={showing.project.latest.scenario_revision_id ?? 'no-revision'}
                     projectId={projectId}
                     solveRuns={showing.solveRuns}
                     scenarios={showing.scenarios}

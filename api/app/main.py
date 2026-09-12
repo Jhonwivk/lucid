@@ -155,6 +155,7 @@ def shell() -> ShellResponse:
                 "configured" if ready["live_azure_possible"] else "not_configured"
             ),
             "solver": "deterministic_training_schedule",
+            "portfolio_solver": "deterministic_portfolio_selection",
             "export": "baseline_handoff_and_solve_result",
             "llm_assist": understanding,
         },

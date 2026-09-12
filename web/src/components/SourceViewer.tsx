@@ -49,7 +49,7 @@ export function SourceViewer({ projectId, material, spans, highlight, runId }: S
   ].join(':')
 
   useEffect(() => {
-    if (!materialId || !material) {
+    if (!materialId || !material || material.deleted_at) {
       setPreview(null)
       setError(null)
       return
@@ -86,6 +86,10 @@ export function SourceViewer({ projectId, material, spans, highlight, runId }: S
 
   if (!material) {
     return <div className="source-viewer empty">{t('selectSource')}</div>
+  }
+
+  if (material.deleted_at) {
+    return <div className="source-viewer empty"><h3>{t('materialDeleted')}</h3><p>{t('materialDeletedBody')}</p></div>
   }
 
   const previewMatches = previewMatchesRequest(preview, material, runId ?? null)

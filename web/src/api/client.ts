@@ -38,7 +38,7 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' }
 
 function staleHint(status: number): string | null {
   if (status === 404 || status === 405) {
-    return 'The process on port 8000 may be an older M0 shell without the T03 persistence routes. Restart the current API from lucid/api.'
+    return 'This resource is unavailable. Check the selected project and restart the API if it is running an older checkout.'
   }
   if (status === 0) {
     return 'Nothing answered at the Vite /api proxy (127.0.0.1:8000). Start the current FastAPI process.'
@@ -170,6 +170,16 @@ export function getProject(projectId: string): Promise<ProjectDetail> {
 
 export function listMaterials(projectId: string): Promise<Material[]> {
   return request<Material[]>(`/projects/${projectId}/materials`)
+}
+
+export function deleteMaterial(projectId: string, materialId: string): Promise<Material> {
+  return request<Material>(`/projects/${projectId}/materials/${materialId}`, { method: 'DELETE' })
+}
+
+export function resumeSolveRun(projectId: string, runId: string): Promise<SolveRun> {
+  return request<SolveRun>(`/projects/${projectId}/solve-runs/${runId}/resume`, {
+    method: 'POST', body: JSON.stringify({ owner: 'workbench' }),
+  })
 }
 
 export function listSourceSpans(projectId: string): Promise<SourceSpan[]> {

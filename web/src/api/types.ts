@@ -165,6 +165,7 @@ export type Material = {
   checksum: string | null
   notes: string | null
   metadata?: Record<string, unknown> | null
+  deleted_at?: string | null
   created_at: string
 }
 
@@ -328,6 +329,12 @@ export type SolveRun = {
   finished_at: string | null
   message: string | null
   explanation?: SolverExplanation | null
+  input_fingerprint?: string | null
+  claim_owner?: string | null
+  heartbeat_at?: string | null
+  stale_at?: string | null
+  resume_count?: number
+  lease_timeout_seconds?: number
   candidates: ResultCandidate[]
   created_at: string
 }

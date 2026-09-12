@@ -1,4 +1,4 @@
-# Product baseline — LUCID
+# Product baseline
 
 Status: current product definition. Updated 2026-09-12.
 
@@ -38,7 +38,7 @@ Training scheduling checks capacity, availability, skills, overlap, cohort overl
 
 - **Materials** — collect evidence and inspect provenance.
 - **Modeling** — run one Business Modeling Agent and review claims.
-- **Baseline** — confirm the handoff and create a versioned formal scenario.
+- **Baseline** — confirm the reviewed baseline and create a versioned formal scenario.
 - **Results** — edit typed inputs, solve, inspect candidates, run what-if and export.
 
 ## Integrity requirements

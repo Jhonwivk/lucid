@@ -1,6 +1,6 @@
 # Stage 1 handoff — historical snapshot
 
-> Historical checkpoint. Superseded by [current release status](../../status.md). This file is retained for audit context and is not a current plan.
+> Historical checkpoint. Superseded by [current release status](../../release-status.md). This file is retained for audit context and is not a current plan.
 
 This document records the Stage 1 checkpoint before Stage 2 implementation and is kept only for audit history.
 

@@ -545,11 +545,35 @@ def export_solve_run_markdown(project_id: str, run_id: str) -> PlainTextResponse
         )
     lines.extend(
         [
+            "## Scenario input",
+            "",
+            "```json",
+            json.dumps(
+                {
+                    "scenario": document.get("scenario"),
+                    "scenario_revision": document.get("scenario_revision"),
+                    "formal_model": document.get("formal_model"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            "```",
+            "",
+            "## Solver explanation",
+            "",
+            "```json",
+            json.dumps(solve.get("explanation"), ensure_ascii=False, indent=2),
+            "```",
+            "",
             "## Provenance",
             "",
-            f"- Materials: {len(document['provenance'].get('materials', []))}",
+            f"- Materials: {len(document['provenance'].get('materials', []))} (full metadata is included below)",
             f"- Source spans: {len(document['provenance'].get('source_spans', []))}",
             f"- Related events: {len(document.get('events', []))}",
+            "",
+            "```json",
+            json.dumps(document["provenance"], ensure_ascii=False, indent=2),
+            "```",
         ]
     )
     filename = f'lucid-solve-run-{run_id[:8]}.md'

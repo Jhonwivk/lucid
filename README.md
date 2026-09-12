@@ -1,23 +1,23 @@
 # LUCID
 
-LUCID is a single-user workbench that turns business evidence into a reviewed formal model, runs bounded deterministic decision solvers, and shows the evidence behind each result.
+LUCID is a single-user business-modeling and deterministic decision workbench. It turns business evidence into a reviewed baseline, a typed scenario, and auditable solver results with explanations and provenance.
 
-The current release implements Stage 2 T11–T19 locally. T20 remains the only open acceptance gate because it requires two live Agent-backed runs with real user materials.
-
-## What the product does
+The product path is:
 
 ```text
-materials → Agent draft → human review → confirmed baseline
-→ typed scenario/model → deterministic solve
-→ candidates + explanation + provenance → what-if → compare → export
+Materials → Business Modeling Agent → human review → confirmed baseline
+→ typed formal scenario → deterministic solve → compare / what-if / export
 ```
 
-The product supports two bounded model families:
+## What you can do
 
-- training schedules: sessions, time slots, rooms, instructors, capacity, availability, skills, overlap, workload and explicit objectives;
-- portfolio selection: budget, required items, conflicts and maximize-value ranking.
+- collect text and uploaded evidence while preserving checksums, source spans and deletion state;
+- review source-linked claims from one Business Modeling Agent and confirm a baseline;
+- model and solve finite training schedules or portfolio selections with bounded deterministic algorithms;
+- inspect ranked candidates, explanations, source provenance, revision comparisons and exports;
+- create what-if revisions without changing the confirmed baseline.
 
-Unknown or unsupported semantics stay blocked as `model_invalid`. The system never invents a rule, schedule or number.
+Unknown or unsupported semantics remain visible and blocked as `model_invalid`. The application never invents a rule, schedule or number.
 
 ## Run locally
 
@@ -27,7 +27,7 @@ Requirements: Python 3.11+, Node.js 20+, and `uv` or `pip`.
 ./scripts/dev.sh
 ```
 
-Or start the API and web app separately:
+To start the services separately:
 
 ```bash
 cd api
@@ -40,11 +40,11 @@ npm install
 npm run dev
 ```
 
-Open <http://127.0.0.1:5173/>. The API health check is <http://127.0.0.1:8000/api/health> and the non-secret provider status is <http://127.0.0.1:8000/api/readiness>.
+Open <http://127.0.0.1:5173/>. The API health check is <http://127.0.0.1:8000/api/health> and non-secret provider readiness is <http://127.0.0.1:8000/api/readiness>.
 
 ## Provider configuration
 
-The deterministic Stage 2 solvers do not need a model API. The Stage 1 Business Modeling Agent needs:
+Deterministic solvers run without a model API. Agent-backed modeling requires:
 
 ```text
 LUCID_MODEL_NAME
@@ -52,37 +52,18 @@ LUCID_MODEL_BASE_URL
 LUCID_MODEL_API_KEY
 ```
 
-Complex-file understanding can additionally use Azure Content Understanding:
+Complex-file understanding can additionally use:
 
 ```text
 AZURE_CONTENT_UNDERSTANDING_ENDPOINT
 AZURE_CONTENT_UNDERSTANDING_KEY
 ```
 
-Without these settings, the app reports a configuration blocker and does not manufacture an Agent draft. Copy `.env.example` to `.env`; never commit secrets.
+Copy `.env.example` to `.env`; never commit secrets. When provider settings are absent, the app reports a configuration blocker and does not fabricate a draft.
 
-## Main API path
+## Verify
 
-| Step | Endpoint |
-| --- | --- |
-| Create project | `POST /api/projects` |
-| Add text or file evidence | `POST /api/projects/{id}/materials/text` or `/materials/import` |
-| Start Agent modeling | `POST /api/projects/{id}/modeling-runs` |
-| Create scenario from confirmed baseline | `POST /api/projects/{id}/scenarios/from-baseline/{baseline_id}` |
-| Create what-if revision | `POST /api/scenarios/{scenario_id}/what-if` |
-| Preview impact | `POST /api/scenarios/{scenario_id}/impact-preview` |
-| Solve training schedule | `POST /api/projects/{id}/solve-training-schedule` |
-| Solve portfolio | `POST /api/projects/{id}/solve-portfolio` |
-| Compare revisions | `GET /api/scenarios/{scenario_id}/compare` |
-| Resume a stale solver run | `POST /api/projects/{id}/solve-runs/{run_id}/resume` |
-| Export JSON/Markdown | `GET /api/projects/{id}/solve-runs/{run_id}/export.json` or `.md` |
-| Delete material content | `DELETE /api/projects/{id}/materials/{material_id}` |
-
-The web workbench exposes the same path through Materials, Modeling, Baseline and Results.
-
-## Verification
-
-Focused checks use isolated temporary databases and real FastAPI/SQLite paths:
+Focused checks use temporary SQLite databases and real FastAPI paths:
 
 ```bash
 python scripts/verify_t11_formalization.py
@@ -95,20 +76,14 @@ python scripts/verify_t19_material_delete.py
 cd web && npm run build && npm run lint
 ```
 
-The repository also contains Stage 1 intake and review verifiers. The current task status is in [specs/001-first-release/tasks.md](specs/001-first-release/tasks.md).
-
-## Scope and boundaries
-
-LUCID is intentionally single-user. It is not a collaboration platform, Agent console, universal optimizer, route planner, payment system or enterprise governance product. Importers preserve evidence; the Agent interprets it; the formal model and deterministic solver decide only within the supported typed families.
+See [docs/development.md](docs/development.md) for setup, environment variables and the complete local verification path. The current release gate and known limits are in [docs/release-status.md](docs/release-status.md).
 
 ## Documentation
 
-Start with [the documentation index](docs/README.md). The five current documents are:
+- [Documentation index](docs/README.md)
+- [Product baseline](docs/product-baseline.md)
+- [Architecture and data flow](docs/architecture.md)
+- [Development and verification](docs/development.md)
+- [Release status and known limits](docs/release-status.md)
 
-- [Product baseline](docs/source/PRODUCT_BASELINE.md)
-- [Agent and evidence architecture](docs/architecture/business-modeling-agent.md)
-- [Current release status](docs/status.md)
-- [First-release specification](specs/001-first-release/spec.md)
-- [Task and acceptance status](specs/001-first-release/tasks.md)
-
-Architecture decisions and historical reports remain available under `docs/adr/`, `docs/design/` and `docs/archive/`, but they are not additional current plans.
+LUCID deliberately stays single-user. It is not a collaboration platform, Agent console, universal optimizer, route planner or enterprise governance product.

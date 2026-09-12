@@ -30,4 +30,4 @@ Generic or unsupported models are inspectable but not executable.
 
 ## Release status
 
-T11–T19 are implemented and locally verified. T20 is blocked until two live Agent-backed evidence runs complete the full path. See [current status](../../docs/status.md), [tasks](tasks.md) and [acceptance](acceptance.md).
+T11–T19 are implemented and locally verified. T20 is blocked until two live Agent-backed evidence runs complete the full path. See [current status](../../release-status.md), [tasks](tasks.md) and [acceptance](acceptance.md).

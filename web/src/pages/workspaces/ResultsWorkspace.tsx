@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { EmptyState } from '../../components/EmptyState'
-import { NullValue, Quantity } from '../../components/NullValue'
+import { NullValue } from '../../components/NullValue'
 import { compareScenarioRevisions, createScenarioRevision, createWhatIfScenario, errorMessage, previewScenarioImpact, runPortfolioSolve, runTrainingScheduleSolve } from '../../api/client'
 import type { ReadinessPayload, Scenario, SolveRun } from '../../api/types'
-import { useI18n, type Locale } from '../../i18n'
-import { formatTimestamp, solveRunStateLabel } from '../../lib/format'
+import { useI18n } from '../../i18n'
+import { SolveRunCard } from './results/SolveRunCard'
 
 type ResultsWorkspaceProps = {
   projectId: string
@@ -16,7 +16,7 @@ type ResultsWorkspaceProps = {
 }
 
 export function ResultsWorkspace({ projectId, solveRuns, scenarios, latestRevisionId, readiness, reload }: ResultsWorkspaceProps) {
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [maxCandidates, setMaxCandidates] = useState(3)
@@ -32,15 +32,16 @@ export function ResultsWorkspace({ projectId, solveRuns, scenarios, latestRevisi
   const [scheduleBusy, setScheduleBusy] = useState(false)
   const [portfolioJson, setPortfolioJson] = useState('')
   const [portfolioBusy, setPortfolioBusy] = useState(false)
-  const latest = useMemo(() => {
+  const latest = (() => {
     for (const scenario of scenarios) {
       const revision = scenario.revisions.find((item) => item.id === latestRevisionId)
       if (revision) return { scenario, revision }
     }
     const scenario = scenarios[0]
     return scenario ? { scenario, revision: scenario.revisions[scenario.revisions.length - 1] } : null
-  }, [scenarios, latestRevisionId])
-  const latestRun = solveRuns[0]
+  })()
+  const revisionRuns = solveRuns.filter((run) => run.scenario_revision_id === latest?.revision.id).sort((a, b) => b.created_at.localeCompare(a.created_at))
+  const latestRun = revisionRuns[0]
   const latestModel = latest?.revision.formal_model
   const solverReady = Boolean(latest?.revision.id && latestModel?.validation?.valid && latestModel.definition?.training_schedule)
   const portfolioReady = Boolean(latest?.revision.id && latestModel?.validation?.valid && latestModel.definition?.portfolio)
@@ -149,23 +150,23 @@ export function ResultsWorkspace({ projectId, solveRuns, scenarios, latestRevisi
   }
   return (
     <div className="stage">
-      <div className="notice honest"><p className="stamp">{t('stage2Solver')}</p><h2>{t('modelToSolve')}</h2><p>{t('modelToSolveBody')}</p></div>
+      <div className="notice honest"><h2>{t('modelToSolve')}</h2><p>{t('modelToSolveBody')}</p></div>
       {!latest ? <EmptyState title={t('noScenarioToSolve')} body={t('noScenarioToSolveBody')} /> : <>
         <article className="fact present solve-input-card">
           <div className="fact-label">{t('solverInput')}</div><h3>{latest.scenario.name} · v{latest.revision.revision_no}</h3>
           <div className="meta-row"><span>{t('formalModel')}: {latestModel?.name ?? <NullValue />}</span><span>{t('modelState')}: {latestModel?.validation?.valid ? t('formalModelReady') : t('formalModelNeedsReview')}</span><span>{t('revisionState')}: {latest.revision.version_state}</span></div>
-          {!solverReady ? <p className="muted">{t('solverNeedsTrainingModel')}</p> : null}
+          {!solverReady && !portfolioReady ? <p className="muted">{t('solverNeedsTrainingModel')}</p> : null}
           {!latestModel?.definition?.training_schedule ? <TrainingModelEditor value={scheduleJson} onChange={setScheduleJson} busy={scheduleBusy} onSave={() => void saveTrainingModel()} /> : null}
           {!latestModel?.definition?.portfolio ? <PortfolioModelEditor value={portfolioJson} onChange={setPortfolioJson} busy={portfolioBusy} onSave={() => void savePortfolioModel()} /> : null}
           <div className="inline-form"><label className="field compact-field"><span>{t('maxCandidates')}</span><input type="number" min={1} max={20} value={maxCandidates} onChange={(event) => setMaxCandidates(Math.max(1, Math.min(20, Number(event.target.value) || 1)))} /></label><button className="btn btn-primary" type="button" disabled={!solverReady || busy || !readiness.solver} onClick={() => void runSolver()}>{busy ? t('solving') : t('runDeterministicSolver')}</button></div>
           {!readiness.solver ? <p className="muted">{t('solverUnavailable')}</p> : null}{error ? <p className="muted" role="alert">{error}</p> : null}
           {portfolioReady ? <button className="btn btn-secondary" type="button" disabled={busy || !readiness.solver} onClick={() => void runPortfolio()}>{busy ? t('solving') : t('runPortfolioSolver')}</button> : null}
         </article>
-        {latestRun ? <SolveRunCard run={latestRun} locale={locale} /> : <EmptyState title={t('noSolveRecords')} body={t('runSolverToSeeResults')} />}
+        {latestRun ? <SolveRunCard run={latestRun} projectId={projectId} revisionNo={latest.revision.revision_no} reload={reload} /> : <EmptyState title={t('noSolveRecords')} body={t('runSolverToSeeResults')} />}
         <WhatIfPanel scenario={latest.scenario} collection={collection} setCollection={setCollection} changeKey={changeKey} setChangeKey={setChangeKey} changeValue={changeValue} setChangeValue={setChangeValue} impact={impact} impactBusy={impactBusy} whatIfBusy={whatIfBusy} onPreview={() => void previewImpact()} onCommit={() => void commitWhatIf()} />
         <ComparisonPanel scenario={latest.scenario} comparison={comparison} busy={comparisonBusy} onCompare={compareRevisions} />
       </>}
-      {solveRuns.length > 1 ? <p className="muted">{solveRuns.length} {t('solveHistoryAvailable')}</p> : null}
+      {solveRuns.length > 0 ? <details className="solve-history tech-details"><summary>{solveRuns.length} {t('solveHistoryAvailable')}</summary><div className="stack">{solveRuns.map((run) => <SolveRunCard key={run.id} run={run} projectId={projectId} revisionNo={scenarios.flatMap((scenario) => scenario.revisions).find((revision) => revision.id === run.scenario_revision_id)?.revision_no} reload={reload} />)}</div></details> : null}
     </div>
   )
 }
@@ -193,46 +194,6 @@ function PortfolioModelEditor({ value, onChange, busy, onSave }: { value: string
   const { t } = useI18n()
   const example = { budget: 100, items: [{ key: 'item-a', name: 'Pilot deployment', cost: 60, value: 90, required: false, conflict_keys: [] }, { key: 'item-b', name: 'Training package', cost: 50, value: 70, required: false, conflict_keys: ['item-a'] }] }
   return <div className="training-editor portfolio-editor"><div className="fact-label">{t('portfolioModelEditor')}</div><p className="muted">{t('portfolioModelEditorBody')}</p><textarea className="code-editor" value={value} onChange={(event) => onChange(event.target.value)} placeholder={JSON.stringify(example, null, 2)} /><button className="btn btn-secondary" type="button" disabled={busy || !value.trim()} onClick={onSave}>{busy ? t('savingPortfolioModel') : t('savePortfolioModel')}</button></div>
-}
-
-function SolveRunCard({ run, locale }: { run: SolveRun; locale: Locale }) {
-  const { t } = useI18n()
-  const firstCandidate = run.candidates[0]
-  const details = firstCandidate?.details
-  const explanation = run.explanation ?? firstCandidate?.explanation ?? (details?.explanation as SolveRun['explanation'] | undefined)
-  const explanationRecord = explanation as Record<string, unknown> | undefined
-  const conflicts = Array.isArray(explanationRecord?.conflicts) ? explanationRecord.conflicts as Array<Record<string, unknown>> : []
-  const issues = Array.isArray(explanationRecord?.issues) ? explanationRecord.issues : []
-  const summary = typeof explanationRecord?.summary === 'string' ? explanationRecord.summary : run.message ?? '—'
-  return <article className={`fact ${run.run_state === 'optimal' || run.run_state === 'feasible' ? 'confirmed' : run.run_state === 'infeasible' || run.run_state === 'model_invalid' ? 'conflicted' : 'unknown'}`}><div className="fact-label">{t('solveResult')}</div><h3>{solveRunStateLabel(run.run_state, t)}</h3><div className="meta-row"><span>{t('solver')}: {run.solver_name ?? <NullValue />}</span><span>{t('execution')}: {run.execution}</span><span>{t('started')}: {run.started_at ? formatTimestamp(run.started_at, locale, t) : <NullValue />}</span><span>{t('finished')}: {run.finished_at ? formatTimestamp(run.finished_at, locale, t) : <NullValue />}</span></div>{run.message ? <p className="muted">{run.message}</p> : null}{run.candidates.length ? <div className="stack" style={{ marginTop: 12 }}>{run.candidates.map((candidate, index) => <CandidateCard key={candidate.id} candidate={candidate} index={index} />)}</div> : <p className="muted">{t('noCandidates')}</p>}{explanation ? <div className="explanation"><strong>{t('solverExplanation')}</strong><p>{summary}</p>{issues.length || conflicts.length ? <ul className="issue-list">{[...issues.map(String), ...conflicts.map((conflict) => String(conflict.message ?? conflict.constraint_key ?? JSON.stringify(conflict)))].map((item, index) => <li key={index}>{item}</li>)}</ul> : null}</div> : null}</article>
-}
-
-function CandidateCard({ candidate, index }: { candidate: SolveRun['candidates'][number]; index: number }) {
-  const { t } = useI18n()
-  const assignments = Array.isArray(candidate.details?.assignments) ? candidate.details.assignments as Array<Record<string, unknown>> : []
-  return <div className="fact present"><div className="fact-label">{t('candidate')} {index + 1}</div><h3>{candidate.label ?? t('unnamedCandidate')}</h3><div className="meta-row"><Quantity name={t('objective')} value={candidate.objective_value} /><span>{t('selected')}: {candidate.is_selected == null ? <NullValue /> : String(candidate.is_selected)}</span></div>{assignments.length ? <ScheduleTable assignments={assignments} /> : null}<PortfolioCandidateSummary result={candidate.result} />{candidate.notes ? <p className="muted">{candidate.notes}</p> : null}<ProvenanceSummary provenance={candidate.provenance ?? candidate.details?.provenance} /></div>
-}
-
-function PortfolioCandidateSummary({ result }: { result?: Record<string, unknown> | null }) {
-  const { t } = useI18n()
-  if (!result || !Array.isArray(result.selected_items)) return null
-  const selected = result.selected_items as Array<Record<string, unknown>>
-  return <div className="meta-row"><span>{t('selectedItems')}: {selected.map((item) => String(item.name ?? item.key ?? '—')).join(', ') || '—'}</span><Quantity name={t('portfolioValue')} value={typeof result.value === 'number' ? result.value : null} /><Quantity name={t('portfolioCost')} value={typeof result.cost === 'number' ? result.cost : null} /></div>
-}
-
-function ProvenanceSummary({ provenance }: { provenance: unknown }) {
-  const { t } = useI18n()
-  if (!provenance || typeof provenance !== 'object') return null
-  const sourceClaims = (provenance as { source_claims?: unknown }).source_claims
-  if (!sourceClaims || typeof sourceClaims !== 'object') return null
-  const claims = sourceClaims as Record<string, unknown>
-  const keys = Object.keys(claims)
-  return <details className="tech-details"><summary>{t('resultProvenance')} ({keys.length})</summary><p className="muted">{t('resultProvenanceBody')}</p><ul className="issue-list provenance-list">{keys.slice(0, 12).map((key) => { const refs = Array.isArray(claims[key]) ? claims[key] as Array<Record<string, unknown>> : []; const materials = [...new Set(refs.map((ref) => String(ref.material_id ?? '')).filter(Boolean))]; return <li key={key}><code>{key}</code> · {refs.length} {t('evidenceRefs')}{materials.length ? ` · ${materials.join(', ')}` : ''}</li> })}</ul></details>
-}
-
-function ScheduleTable({ assignments }: { assignments: Array<Record<string, unknown>> }) {
-  const { t } = useI18n()
-  return <div className="schedule-table" role="table" aria-label={t('scheduleAssignments')}><div className="schedule-row schedule-head" role="row"><span>{t('session')}</span><span>{t('timeSlot')}</span><span>{t('room')}</span><span>{t('instructor')}</span></div>{assignments.map((item, index) => <div className="schedule-row" role="row" key={String(item.session_key ?? index)}><span>{String(item.session_name ?? item.session_key ?? '—')}</span><span>{String(item.slot_label ?? item.slot_key ?? '—')}</span><span>{String(item.room_name ?? item.room_key ?? '—')}</span><span>{String(item.instructor_name ?? item.instructor_key ?? '—')}</span></div>)}</div>
 }
 
 function WhatIfPanel(props: { scenario: Scenario; collection: string; setCollection: (value: string) => void; changeKey: string; setChangeKey: (value: string) => void; changeValue: string; setChangeValue: (value: string) => void; impact: Record<string, unknown> | null; impactBusy: boolean; whatIfBusy: boolean; onPreview: () => void; onCommit: () => void }) {

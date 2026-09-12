@@ -13,7 +13,7 @@ Materials → one Business Modeling Agent → human review → confirmed baselin
 → typed formal scenario → deterministic solve → compare/change/export
 ```
 
-Stage 2 T11–T19 is implemented and locally verified. T20 is blocked only on two live Agent-backed acceptance runs. Never present fabricated schedules or provider output as success.
+The deterministic workbench path is implemented and locally verified. Two live Agent-backed acceptance runs remain the release gate. Never present fabricated schedules or provider output as success.
 
 ## Binding decisions
 
@@ -42,7 +42,7 @@ Never add semantic extraction to a source importer merely because a model can co
 
 ## Task tracking
 
-The readable status is [specs/001-first-release/tasks.md](specs/001-first-release/tasks.md). Mark work done only after implementation and verification. The current product index is [docs/README.md](docs/README.md); the current status is [docs/status.md](docs/status.md).
+Mark work done only after implementation and verification. The current product index is [docs/README.md](docs/README.md); the current release status is [docs/release-status.md](docs/release-status.md). Historical milestone records are archived under [docs/archive/](docs/archive/).
 
 ## Cursor execution policy
 
@@ -50,4 +50,4 @@ For medium or large changes, create one complete `.tasks/<task-name>.md` and del
 
 ## Visual source
 
-The current visual rules are in [DESIGN.md](DESIGN.md). Historical design notes are under `docs/design/` and are not a second source of truth.
+The current visual rules are in [DESIGN.md](DESIGN.md). Historical design notes are under `docs/archive/design/` and are not a second source of truth.
