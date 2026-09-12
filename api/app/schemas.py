@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -39,13 +39,58 @@ class RuleIn(StrictModel):
     permission: bool | None = None
 
 
+class FormalVariableIn(StrictModel):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    domain: str | None = None
+    unit: str | None = None
+    source_claim_key: str | None = None
+
+
+class FormalParameterIn(StrictModel):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    value: str | float | int | bool | None = None
+    unit: str | None = None
+    source_claim_key: str | None = None
+
+
+class FormalConstraintIn(StrictModel):
+    key: str = Field(min_length=1)
+    expression: str = Field(min_length=1)
+    strength: Literal["hard", "soft", "conditional"] = "hard"
+    enabled: bool = True
+    source_claim_key: str | None = None
+
+
+class FormalObjectiveIn(StrictModel):
+    key: str = Field(min_length=1)
+    expression: str = Field(min_length=1)
+    direction: Literal["minimize", "maximize", "unknown"] = "unknown"
+    priority: int | None = Field(default=None, ge=1)
+    weight: float | None = Field(default=None, gt=0)
+    source_claim_key: str | None = None
+
+
+class FormalModelDefinitionIn(StrictModel):
+    schema_version: int = Field(default=1, ge=1)
+    family: str = Field(default="generic", min_length=1)
+    variables: list[FormalVariableIn] = Field(default_factory=list)
+    parameters: list[FormalParameterIn] = Field(default_factory=list)
+    constraints: list[FormalConstraintIn] = Field(default_factory=list)
+    objectives: list[FormalObjectiveIn] = Field(default_factory=list)
+
+
 class FormalModelIn(StrictModel):
     name: str = "untitled-model"
     version_state: VersionState = "draft"
-    variable_count: int | None = None
-    constraint_count: int | None = None
+    variable_count: int | None = Field(default=None, ge=0)
+    constraint_count: int | None = Field(default=None, ge=0)
     objective_text: str | None = None
     notes: str | None = None
+    definition: FormalModelDefinitionIn | None = None
+    understanding_revision_id: str | None = None
+    dependency_fingerprint: str | None = None
 
 
 class ResultCandidateIn(StrictModel):
@@ -114,12 +159,24 @@ class ScenarioCreate(StrictModel):
     rules: list[RuleIn] = Field(default_factory=list)
 
 
+class ScenarioFromBaselineCreate(StrictModel):
+    name: str = Field(min_length=1)
+    notes: str | None = None
+    expected_baseline_id: str | None = None
+
+
 class ScenarioRevisionCreate(StrictModel):
     notes: str | None = None
     version_state: VersionState = "draft"
     based_on_understanding_id: str | None = None
     formal_model: FormalModelIn | None = None
     rules: list[RuleIn] = Field(default_factory=list)
+    expected_parent_revision_id: str | None = None
+
+
+class ScenarioInvalidationCreate(StrictModel):
+    reason: str = Field(min_length=1)
+    expected_version_state: VersionState = "draft"
 
 
 class SolveRunCreate(StrictModel):
@@ -193,6 +250,10 @@ class FormalModelOut(StrictModel):
     constraint_count: int | None
     objective_text: str | None
     notes: str | None
+    definition: FormalModelDefinitionIn | None = None
+    definition_hash: str | None = None
+    dependency_fingerprint: str | None = None
+    validation: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
 
@@ -228,6 +289,8 @@ class ScenarioRevisionOut(StrictModel):
     based_on_understanding_id: str | None
     formal_model_id: str | None
     notes: str | None
+    invalidation_reason: str | None = None
+    invalidated_at: str | None = None
     formal_model: FormalModelOut | None = None
     rules: list[RuleOut] = Field(default_factory=list)
     created_at: str

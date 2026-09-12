@@ -15,6 +15,8 @@ from .schemas import (
     ProjectPatch,
     ProjectSummary,
     ScenarioCreate,
+    ScenarioFromBaselineCreate,
+    ScenarioInvalidationCreate,
     ScenarioOut,
     ScenarioRevisionCreate,
     ScenarioRevisionOut,
@@ -200,6 +202,21 @@ def get_understanding(revision_id: str) -> UnderstandingOut:
         raise _http_error(exc) from exc
 
 
+@router.post(
+    "/api/projects/{project_id}/scenarios/from-baseline/{baseline_id}",
+    response_model=ScenarioOut,
+)
+def create_scenario_from_baseline(
+    project_id: str, baseline_id: str, payload: ScenarioFromBaselineCreate
+) -> ScenarioOut:
+    try:
+        return ScenarioOut.model_validate(
+            store.create_scenario_from_baseline(project_id, baseline_id, payload)
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
 @router.post("/api/projects/{project_id}/scenarios", response_model=ScenarioOut)
 def create_scenario(project_id: str, payload: ScenarioCreate) -> ScenarioOut:
     try:
@@ -237,7 +254,26 @@ def create_scenario_revision(
         return ScenarioRevisionOut.model_validate(
             store.create_scenario_revision(scenario_id, payload)
         )
-    except store.NotFoundError as exc:
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
+    "/api/scenario-revisions/{revision_id}/invalidate",
+    response_model=ScenarioRevisionOut,
+)
+def invalidate_scenario_revision(
+    revision_id: str, payload: ScenarioInvalidationCreate
+) -> ScenarioRevisionOut:
+    try:
+        return ScenarioRevisionOut.model_validate(
+            store.invalidate_scenario_revision(
+                revision_id,
+                reason=payload.reason,
+                expected_version_state=payload.expected_version_state,
+            )
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
         raise _http_error(exc) from exc
 
 

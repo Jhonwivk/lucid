@@ -16,7 +16,7 @@ Status legend: `done` | `not_started` | `in_progress` | `blocked`
 | T08 | image material adapter — PNG/JPEG + image metadata/full-image provenance; no semantic understanding | done |
 | T09 | budgeted cross-material understanding over the current Evidence Set; model capability selected from actual evidence types | done |
 | T10 | source-linked review / correction / batch confirmation | done |
-| T11 | scenario editing + formal rule model + invalidation/versioning | not_started |
+| T11 | scenario editing + formal rule model + invalidation/versioning | in_progress |
 | T12 | deterministic training-scheduling solver | not_started |
 | T13 | leave/change conflict explanation + conditional repair | not_started |
 | T14 | portfolio combination selection in the same workflow | not_started |
@@ -38,11 +38,11 @@ Status legend: `done` | `not_started` | `in_progress` | `blocked`
 - T08 marked done after PNG/JPEG intake persisted real bytes, Pillow-validated dimensions/format/mode/checksum, and exactly one honest full-image SourceSpan (`region_state=full_image`, normalized top-left `x=0,y=0,width=1,height=1`) with `semantic_understanding=not_performed`. Image intake performs **zero** Grok/xAI/macOS Vision/OCR/object-detection calls. No vision provider or API key is an M2/T08 gate.
 - T06/T07/T08 are engineering adapter slices, not sequential user workflow stages. After verified implementation they are `done` and **M2 is complete**.
 - **Stage 1 mapping (2026-09-12):** T09 is implemented as the single Business Modeling Agent over a frozen Material snapshot (question-only evidence allowed). T10 is implemented as claim review (accept/edit/reject/not_applicable) plus freeze/export of an effective baseline. Local contract tests and UI landed. LIVE model/Azure execution is still configuration-blocked and is **not** T20.
-- T11–T20 remain `not_started`. Do not mark solver, scenario formalization, or two live end-to-end runs complete from Stage 1.
+- T11 is `in_progress`: the first slice binds a confirmed baseline to scenario v1, persists a typed formal definition, protects revision parents with CAS, and records invalidation. T12–T20 remain `not_started`; do not mark solver or two live end-to-end runs complete.
 - Agent interrupt/resume/cancel is part of T09 (Stage 1). T18 remains **solver-run** recovery and is not done.
 - T09 consumes the unified Evidence Set. It must understand whatever the user actually supplied. Complex files use the one Azure Content Understanding tool when configured; otherwise coverage stays incomplete. T09 must not silently coerce missing information.
 - Do not mark later tasks done from documentation alone.
-- Recommended immediate work after LIVE config: real Agent + Azure run on a user analysis (T20 still separate). Then T11 formalization / T12 solver.
+- Recommended next work: complete T11 UI editing and validation, then implement the narrow deterministic training-scheduling slice in T12. A real Agent run remains a separate T20 acceptance requirement.
 
 ## Architecture guardrail
 

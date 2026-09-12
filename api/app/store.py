@@ -10,6 +10,7 @@ never be coerced to 0 / false.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -24,6 +25,7 @@ from .schemas import (
     ResultCandidateIn,
     RuleIn,
     ScenarioCreate,
+    ScenarioFromBaselineCreate,
     ScenarioRevisionCreate,
     SolveRunCreate,
     SourceSpanCreate,
@@ -236,6 +238,58 @@ def _understanding_from_row(
     }
 
 
+def _definition_payload(payload: FormalModelIn | None) -> dict[str, Any] | None:
+    if payload is None or payload.definition is None:
+        return None
+    return payload.definition.model_dump(mode="json")
+
+
+def _definition_hash(definition: dict[str, Any] | None) -> str | None:
+    if definition is None:
+        return None
+    encoded = json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _formal_definition_issues(definition: dict[str, Any] | None) -> list[str]:
+    if not definition:
+        return ["formal_model.definition is required"]
+    issues: list[str] = []
+    collections = ("variables", "parameters", "constraints", "objectives")
+    keys: set[str] = set()
+    for collection in collections:
+        for item in definition.get(collection) or []:
+            if not isinstance(item, dict):
+                issues.append(f"{collection} item must be an object")
+                continue
+            key = str(item.get("key") or "")
+            if not key:
+                issues.append(f"{collection} item is missing key")
+            elif key in keys:
+                issues.append(f"duplicate formal definition key: {key}")
+            else:
+                keys.add(key)
+    if not definition.get("variables"):
+        issues.append("formal model has no variables")
+    if not definition.get("constraints"):
+        issues.append("formal model has no constraints")
+    if not definition.get("objectives"):
+        issues.append("formal model has no objectives")
+    for objective in definition.get("objectives") or []:
+        if isinstance(objective, dict):
+            objective_key = objective.get("key") or "<unnamed>"
+            if objective.get("direction") not in {"minimize", "maximize"}:
+                issues.append(f"objective {objective_key} has no executable direction")
+            if objective.get("priority") is None:
+                issues.append(f"objective {objective_key} has no numeric priority")
+    return issues
+
+
+def _formal_model_validation(definition: dict[str, Any] | None) -> dict[str, Any]:
+    issues = _formal_definition_issues(definition)
+    return {"valid": not issues, "issues": issues}
+
+
 def _formal_model_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
@@ -249,6 +303,10 @@ def _formal_model_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
         "constraint_count": row["constraint_count"],
         "objective_text": row["objective_text"],
         "notes": row["notes"],
+        "definition": _load_json(row["definition_json"], None) if "definition_json" in row.keys() else None,
+        "definition_hash": row["definition_hash"] if "definition_hash" in row.keys() else None,
+        "dependency_fingerprint": row["dependency_fingerprint"] if "dependency_fingerprint" in row.keys() else None,
+        "validation": _formal_model_validation(_load_json(row["definition_json"], None) if "definition_json" in row.keys() else None),
         "created_at": row["created_at"],
     }
 
@@ -275,6 +333,8 @@ def _scenario_revision_from_row(
         "based_on_understanding_id": row["based_on_understanding_id"],
         "formal_model_id": row["formal_model_id"],
         "notes": row["notes"],
+        "invalidation_reason": row["invalidation_reason"] if "invalidation_reason" in row.keys() else None,
+        "invalidated_at": row["invalidated_at"] if "invalidated_at" in row.keys() else None,
         "created_at": row["created_at"],
     }
     if include_body:
@@ -984,13 +1044,15 @@ def _insert_formal_model(
 ) -> str | None:
     if payload is None:
         return None
+    definition = _definition_payload(payload)
     model_id = _new_id()
     conn.execute(
         """
         INSERT INTO formal_model (
             id, project_id, scenario_revision_id, name, version_state,
-            variable_count, constraint_count, objective_text, notes, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            variable_count, constraint_count, objective_text, notes,
+            definition_json, definition_hash, dependency_fingerprint, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             model_id,
@@ -998,10 +1060,13 @@ def _insert_formal_model(
             scenario_revision_id,
             payload.name,
             payload.version_state,
-            payload.variable_count,
-            payload.constraint_count,
+            payload.variable_count if payload.variable_count is not None else len((definition or {}).get("variables") or []),
+            payload.constraint_count if payload.constraint_count is not None else len((definition or {}).get("constraints") or []),
             payload.objective_text,
             payload.notes,
+            _dump_json(definition) if definition is not None else None,
+            _definition_hash(definition),
+            payload.dependency_fingerprint,
             utc_now(),
         ),
     )
@@ -1018,14 +1083,24 @@ def _create_scenario_revision(
     latest = conn.execute(
         """
         SELECT id, revision_no FROM scenario_revision
-        WHERE scenario_id = ?
+        WHERE scenario_id = ? AND version_state != 'invalidated'
         ORDER BY revision_no DESC
         LIMIT 1
         """,
         (scenario_id,),
     ).fetchone()
-    revision_no = 1 if latest is None else latest["revision_no"] + 1
+    max_revision = conn.execute(
+        "SELECT MAX(revision_no) AS revision_no FROM scenario_revision WHERE scenario_id = ?",
+        (scenario_id,),
+    ).fetchone()["revision_no"]
+    revision_no = 1 if max_revision is None else max_revision + 1
     parent_id = None if latest is None else latest["id"]
+    expected_parent = payload.expected_parent_revision_id
+    if latest is None:
+        if expected_parent is not None:
+            raise ConflictError("scenario has no parent revision; expected_parent_revision_id must be null")
+    elif expected_parent is not None and expected_parent != latest["id"]:
+        raise ConflictError("scenario revision parent is stale; reload the latest revision")
     based_on = payload.based_on_understanding_id
     if based_on is None:
         project = _require_project(conn, project_id)
@@ -1072,17 +1147,18 @@ def _create_scenario_revision(
         scenario_revision_id=revision_id,
         rules=payload.rules,
     )
-    conn.execute(
-        """
-        UPDATE analysis_project
-        SET latest_scenario_id = ?,
-            latest_scenario_revision_id = ?,
-            latest_formal_model_id = COALESCE(?, latest_formal_model_id),
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (scenario_id, revision_id, model_id, utc_now(), project_id),
-    )
+    if payload.version_state != "invalidated":
+        conn.execute(
+            """
+            UPDATE analysis_project
+            SET latest_scenario_id = ?,
+                latest_scenario_revision_id = ?,
+                latest_formal_model_id = COALESCE(?, latest_formal_model_id),
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (scenario_id, revision_id, model_id, utc_now(), project_id),
+        )
     _event(
         conn,
         project_id=project_id,
@@ -1094,12 +1170,190 @@ def _create_scenario_revision(
             "scenario_id": scenario_id,
             "revision_no": revision_no,
             "parent_revision_id": parent_id,
+            "version_state": payload.version_state,
+            "formal_model_id": model_id,
         },
     )
     row = conn.execute(
         "SELECT * FROM scenario_revision WHERE id = ?", (revision_id,)
     ).fetchone()
     return _scenario_revision_from_row(conn, row, include_body=True)
+
+
+def _baseline_rule(item: dict[str, Any], *, rule_kind: str) -> RuleIn:
+    refs = item.get("evidence_refs") or []
+    ref = refs[0] if refs and isinstance(refs[0], dict) else {}
+    statement = item.get("effective_statement") or item.get("proposed_interpretation") or item.get("original_statement") or item.get("name") or ""
+    return RuleIn(
+        rule_kind=rule_kind,
+        statement=str(statement),
+        review_status="accepted",
+        evidence_status="present" if refs else "unknown",
+        source_span_id=ref.get("source_span_id"),
+        condition_kind="if_then" if item.get("condition") else "always",
+        premise_text=item.get("condition"),
+        cost=item.get("weight"),
+        capacity=None,
+        permission=None,
+    )
+
+
+def _formal_from_handoff(
+    handoff: dict[str, Any],
+    *,
+    name: str,
+    dependency_fingerprint: str,
+    understanding_revision_id: str | None = None,
+) -> tuple[FormalModelIn, list[RuleIn]]:
+    variables = []
+    for item in handoff.get("decision_variables") or []:
+        key = str(item.get("claim_key") or item.get("name") or f"variable-{len(variables) + 1}")
+        variables.append(
+            {
+                "key": key,
+                "name": str(item.get("name") or item.get("effective_statement") or key),
+                "domain": item.get("domain"),
+                "unit": item.get("unit"),
+                "source_claim_key": item.get("claim_key"),
+            }
+        )
+    parameters = []
+    for item in handoff.get("parameters") or []:
+        key = str(item.get("claim_key") or item.get("name") or f"parameter-{len(parameters) + 1}")
+        parameters.append(
+            {
+                "key": key,
+                "name": str(item.get("name") or key),
+                "value": item.get("normalized_value") if item.get("normalized_value") is not None else item.get("raw_value"),
+                "unit": item.get("unit"),
+                "source_claim_key": item.get("claim_key"),
+            }
+        )
+    constraints = []
+    rules: list[RuleIn] = []
+    for item in handoff.get("constraints") or []:
+        key = str(item.get("claim_key") or f"constraint-{len(constraints) + 1}")
+        constraints.append(
+            {
+                "key": key,
+                "expression": str(item.get("effective_statement") or item.get("proposed_interpretation") or item.get("original_statement") or ""),
+                "strength": item.get("strength") or "hard",
+                "enabled": True,
+                "source_claim_key": item.get("claim_key"),
+            }
+        )
+        rules.append(_baseline_rule(item, rule_kind=item.get("strength") or "hard"))
+    objectives = []
+    for item in handoff.get("objectives") or []:
+        key = str(item.get("claim_key") or f"objective-{len(objectives) + 1}")
+        raw_priority = item.get("priority")
+        priority: int | None = None
+        if isinstance(raw_priority, int) and raw_priority >= 1:
+            priority = raw_priority
+        elif isinstance(raw_priority, str) and raw_priority.strip().isdigit() and int(raw_priority.strip()) >= 1:
+            priority = int(raw_priority.strip())
+        objectives.append(
+            {
+                "key": key,
+                "expression": str(item.get("effective_statement") or item.get("proposed_interpretation") or item.get("original_statement") or ""),
+                "direction": item.get("direction") if item.get("direction") in {"minimize", "maximize"} else "unknown",
+                "priority": priority,
+                "weight": item.get("weight"),
+                "source_claim_key": item.get("claim_key"),
+            }
+        )
+        rules.append(_baseline_rule(item, rule_kind="objective"))
+    definition = {
+        "schema_version": 1,
+        "family": "generic",
+        "variables": variables,
+        "parameters": parameters,
+        "constraints": constraints,
+        "objectives": objectives,
+    }
+    formal = FormalModelIn(
+        name=name,
+        version_state="draft",
+        variable_count=len(variables),
+        constraint_count=len(constraints),
+        objective_text="; ".join(item["expression"] for item in objectives) or None,
+        notes="Derived from a confirmed pre-solver baseline. Human formalization is still required before solving.",
+        definition=definition,
+        understanding_revision_id=understanding_revision_id,
+        dependency_fingerprint=dependency_fingerprint,
+    )
+    return formal, rules
+
+
+def create_scenario_from_baseline(
+    project_id: str,
+    baseline_id: str,
+    payload: ScenarioFromBaselineCreate,
+) -> dict[str, Any]:
+    conn = connect()
+    try:
+        with conn:
+            project = _require_project(conn, project_id)
+            baseline = conn.execute(
+                "SELECT * FROM modeling_baseline WHERE id = ? AND project_id = ?",
+                (baseline_id, project_id),
+            ).fetchone()
+            if baseline is None:
+                raise NotFoundError("baseline not found")
+            if payload.expected_baseline_id is not None and payload.expected_baseline_id != baseline_id:
+                raise ConflictError("baseline binding is stale")
+            if baseline["scenario_revision_id"] is not None:
+                raise ConflictError("baseline is already bound to a scenario")
+            handoff = _load_json(baseline["export_json"], {})
+            fingerprint = hashlib.sha256(
+                json.dumps(handoff, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+            formal, rules = _formal_from_handoff(
+                handoff,
+                name=f"{payload.name} model",
+                dependency_fingerprint=fingerprint,
+                understanding_revision_id=baseline["understanding_revision_id"],
+            )
+            scenario_id = _new_id()
+            conn.execute(
+                "INSERT INTO scenario (id, project_id, name, created_at) VALUES (?, ?, ?, ?)",
+                (scenario_id, project_id, payload.name, utc_now()),
+            )
+            revision = _create_scenario_revision(
+                conn,
+                project_id=project_id,
+                scenario_id=scenario_id,
+                payload=ScenarioRevisionCreate(
+                    notes=payload.notes,
+                    version_state="draft",
+                    based_on_understanding_id=baseline["understanding_revision_id"],
+                    formal_model=formal,
+                    rules=rules,
+                    expected_parent_revision_id=None,
+                ),
+            )
+            cursor = conn.execute(
+                """
+                UPDATE modeling_baseline
+                SET scenario_id = ?, scenario_revision_id = ?
+                WHERE id = ? AND scenario_revision_id IS NULL
+                """,
+                (scenario_id, revision["id"], baseline_id),
+            )
+            if cursor.rowcount != 1:
+                raise ConflictError("baseline was bound concurrently")
+            _event(
+                conn,
+                project_id=project_id,
+                event_type="baseline.bound_to_scenario",
+                entity_kind="modeling_baseline",
+                entity_id=baseline_id,
+                summary="Bound confirmed baseline to a Stage 2 scenario",
+                payload={"scenario_id": scenario_id, "scenario_revision_id": revision["id"], "definition_hash": revision.get("formal_model", {}).get("definition_hash")},
+            )
+            return get_scenario_with_conn(conn, scenario_id)
+    finally:
+        conn.close()
 
 
 def create_scenario(project_id: str, payload: ScenarioCreate) -> dict[str, Any]:
@@ -1209,6 +1463,71 @@ def create_scenario_revision(
                 scenario_id=scenario_id,
                 payload=payload,
             )
+    finally:
+        conn.close()
+
+
+def invalidate_scenario_revision(
+    revision_id: str,
+    *,
+    reason: str,
+    expected_version_state: str = "draft",
+) -> dict[str, Any]:
+    conn = connect()
+    try:
+        with conn:
+            row = conn.execute(
+                "SELECT * FROM scenario_revision WHERE id = ?", (revision_id,)
+            ).fetchone()
+            if row is None:
+                raise NotFoundError("scenario revision not found")
+            if row["version_state"] != expected_version_state:
+                raise ConflictError("scenario revision state is stale; reload before invalidating")
+            now = utc_now()
+            cursor = conn.execute(
+                """
+                UPDATE scenario_revision
+                SET version_state = 'invalidated', invalidation_reason = ?, invalidated_at = ?
+                WHERE id = ? AND version_state = ?
+                """,
+                (reason, now, revision_id, expected_version_state),
+            )
+            if cursor.rowcount != 1:
+                raise ConflictError("scenario revision changed while invalidating")
+            if row["formal_model_id"]:
+                conn.execute(
+                    "UPDATE formal_model SET version_state = 'invalidated' WHERE id = ? AND version_state != 'invalidated'",
+                    (row["formal_model_id"],),
+                )
+            project = conn.execute(
+                "SELECT latest_scenario_revision_id, latest_formal_model_id FROM analysis_project WHERE id = ?",
+                (row["project_id"],),
+            ).fetchone()
+            if project is not None and project["latest_scenario_revision_id"] == revision_id:
+                parent = row["parent_revision_id"]
+                parent_model = None
+                if parent:
+                    parent_model = conn.execute(
+                        "SELECT formal_model_id FROM scenario_revision WHERE id = ?", (parent,)
+                    ).fetchone()
+                conn.execute(
+                    """
+                    UPDATE analysis_project
+                    SET latest_scenario_revision_id = ?, latest_formal_model_id = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (parent, None if parent_model is None else parent_model["formal_model_id"], now, row["project_id"]),
+                )
+            _event(
+                conn,
+                project_id=row["project_id"],
+                event_type="scenario.revision_invalidated",
+                entity_kind="scenario_revision",
+                entity_id=revision_id,
+                summary="Invalidated a scenario revision",
+                payload={"reason": reason, "previous_version_state": expected_version_state},
+            )
+        return get_scenario_revision(revision_id)
     finally:
         conn.close()
 

@@ -21,7 +21,7 @@ from .states import (
     WORKFLOW_MATURITY_SQL,
 )
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = PACKAGE_ROOT.parent
 _DOTENV_LOADED = False
@@ -607,6 +607,16 @@ def _migrate_to_5(conn: sqlite3.Connection) -> None:
     )
 
 
+
+def _migrate_to_6(conn: sqlite3.Connection) -> None:
+    """Add structured formal-model payload and invalidation audit fields."""
+    _add_column_if_missing(conn, "formal_model", "definition_json", "TEXT")
+    _add_column_if_missing(conn, "formal_model", "definition_hash", "TEXT")
+    _add_column_if_missing(conn, "formal_model", "dependency_fingerprint", "TEXT")
+    _add_column_if_missing(conn, "scenario_revision", "invalidation_reason", "TEXT")
+    _add_column_if_missing(conn, "scenario_revision", "invalidated_at", "TEXT")
+
+
 def apply_migrations(conn: sqlite3.Connection) -> int:
     conn.execute(
         """
@@ -644,6 +654,11 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
         _set_meta(conn, "schema_version", "5")
         current = 5
         _set_meta(conn, "bootstrap", "stage1-one-active-run")
+    if current < 6:
+        _migrate_to_6(conn)
+        _set_meta(conn, "schema_version", "6")
+        current = 6
+        _set_meta(conn, "bootstrap", "stage2-formalization")
     return current
 
 
