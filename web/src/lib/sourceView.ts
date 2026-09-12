@@ -1,4 +1,4 @@
-import type { Material, MaterialPreview, ModelingRun, SourceSpan } from '../api/types'
+import type { Material, MaterialPreview, ModelingDraftRecord, ModelingRun, SourceSpan } from '../api/types'
 
 export type SnapshotMaterial = {
   id: string
@@ -77,6 +77,15 @@ export function compareModelingRuns(a: ModelingRun, b: ModelingRun): number {
   const created = (b.created_at || '').localeCompare(a.created_at || '')
   if (created !== 0) return created
   return (b.id || '').localeCompare(a.id || '')
+}
+
+export function selectDraftForRun(
+  drafts: ModelingDraftRecord[],
+  runId: string | null | undefined,
+): ModelingDraftRecord | null {
+  if (!runId) return null
+  const forRun = drafts.filter((item) => item.run_id === runId)
+  return forRun[forRun.length - 1] ?? null
 }
 
 export function selectLatestModelingRun(

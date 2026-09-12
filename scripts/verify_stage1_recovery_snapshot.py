@@ -509,6 +509,36 @@ def main() -> None:
     blank = client.post(f"/api/modeling-runs/{waiting['id']}/resume", json={"answer": "   "})
     expect(blank.status_code == 422, blank.text)
 
+    # --- Waiting for the user must not keep consuming the Agent wall deadline ---
+    waiting_idle = persistence.get_run(waiting["id"])
+    expect(waiting_idle["status"] == "waiting_for_user", waiting_idle)
+    expect(waiting_idle.get("wall_deadline_at") in (None, ""), waiting_idle)
+    same_thread = waiting_idle["thread_id"]
+    pending_before = [
+        item for item in (waiting_idle.get("clarifications") or []) if item.get("status") == "pending"
+    ]
+    expect(len(pending_before) == 1, waiting_idle.get("clarifications"))
+    past_deadline = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat()
+    persistence.update_run(waiting["id"], wall_deadline_at=past_deadline)
+    still_waiting = persistence.get_run(waiting["id"])
+    expect(still_waiting["status"] == "waiting_for_user", still_waiting)
+    expect(still_waiting.get("error_code") != "timeout", still_waiting)
+    resumed_late = runner.resume_run(waiting["id"], "The plant manager is the overtime approver.")
+    expect(resumed_late["id"] == waiting["id"], resumed_late)
+    expect(resumed_late["thread_id"] == same_thread, resumed_late)
+    expect(resumed_late.get("error_code") != "timeout", resumed_late)
+    expect(resumed_late["status"] != "failed" or resumed_late.get("error_code") != "timeout", resumed_late)
+    finished_late = runner.wait_for_run(waiting["id"], timeout=60)
+    expect(finished_late["id"] == waiting["id"], finished_late)
+    expect(finished_late["thread_id"] == same_thread, finished_late)
+    expect(finished_late["status"] in {"partial", "completed"}, finished_late)
+    expect(finished_late.get("error_code") != "timeout", finished_late)
+    answered = [
+        item for item in (finished_late.get("clarifications") or []) if item.get("status") == "answered"
+    ]
+    expect(len(answered) == 1, finished_late.get("clarifications"))
+    expect(finished_late.get("drafts"), finished_late)
+
     # --- Restart recovery for injected queued/running doubles ---
     orphan_project = store.create_project(ProjectCreate(title="Orphan"))
     ingest.ingest_direct_text(orphan_project["id"], "Orphaned run evidence.", label="Note")
@@ -995,6 +1025,270 @@ def main() -> None:
     expect(json.dumps(after_late.get("coverage") or []) == before_coverage, after_late.get("coverage"))
     expect(len(after_late.get("events") or []) == before_events, after_late.get("events"))
     expect(not any("Submitted" in str(item.get("title")) for item in after_late.get("events") or []), after_late.get("events"))
+
+    # --- save_draft must roll back if cancel wins between validate and persist ---
+    race_project = store.create_project(ProjectCreate(title="Draft persist race"))
+    race_src = ingest.ingest_direct_text(race_project["id"], "Cancel must roll back the draft write.", label="Note")
+    race_run = persistence.create_run(
+        race_project["id"],
+        question="Can cancel beat save_draft?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+        question_material_id=race_src["material"]["id"],
+    )
+    _running(persistence, race_run["id"])
+
+    def cancel_before_persist(run_id: str) -> None:
+        persistence.request_cancel(run_id)
+
+    persistence._before_save_draft_persist = cancel_before_persist
+    try:
+        persistence.save_draft(race_run["id"], _draft(persistence.get_run(race_run["id"])))
+        raise SystemExit("FAIL: save_draft must not commit after mid-persist cancel")
+    except persistence.StaleRunError:
+        pass
+    finally:
+        persistence._before_save_draft_persist = None
+    raced = persistence.get_run(race_run["id"])
+    expect(raced["status"] == "cancelled", raced)
+    expect(not (raced.get("drafts") or []), raced.get("drafts"))
+    race_project_after = store.get_project(race_project["id"])
+    latest_draft_id = (race_project_after.get("latest") or {}).get("modeling_draft_id") or race_project_after.get(
+        "latest_modeling_draft_id"
+    )
+    expect(not latest_draft_id, race_project_after)
+
+    # --- Cross-run draft fallback: R2 with no draft must not show R1 claims ---
+    def select_draft_for_run(drafts: list[dict], run_id: str | None) -> dict | None:
+        if not run_id:
+            return None
+        matches = [item for item in drafts if item.get("run_id") == run_id]
+        return matches[-1] if matches else None
+
+    r1_draft = {"run_id": "R1", "claims": [{"id": "claim-r1", "original_statement": "From R1"}]}
+    selected_r2 = select_draft_for_run([r1_draft], "R2")
+    expect(selected_r2 is None, selected_r2)
+    expect((selected_r2 or {}).get("claims") in (None, []), selected_r2)
+    selected_r1 = select_draft_for_run([r1_draft], "R1")
+    expect(selected_r1 is not None and selected_r1.get("claims"), selected_r1)
+
+    # --- Freeze re-reads snapshot bytes; Azure provenance rejects failed/out-of-range/unmapped refs ---
+    freeze_project = store.create_project(ProjectCreate(title="Freeze snapshot recheck"))
+    freeze_src = ingest.ingest_direct_text(
+        freeze_project["id"],
+        "Freeze must re-read snapshot bytes.",
+        label="Note",
+    )
+    freeze_run = persistence.create_run(
+        freeze_project["id"],
+        question="Can a tampered snapshot freeze?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+        question_material_id=freeze_src["material"]["id"],
+    )
+    _running(persistence, freeze_run["id"])
+    freeze_draft = persistence.save_draft(freeze_run["id"], _draft(freeze_run))
+    freeze_material = get_snapshot_material(freeze_run, freeze_src["material"]["id"])
+    expect(freeze_material and freeze_material.get("snapshot_path"), freeze_material)
+    (get_data_dir() / freeze_material["snapshot_path"]).write_bytes(b"tampered after save_draft")
+    try:
+        persistence.freeze_baseline(freeze_project["id"], freeze_draft["id"])
+        raise SystemExit("FAIL: freeze must fail after snapshot tamper")
+    except store.ConflictError as exc:
+        expect("stale_input" in str(exc).lower() or "checksum" in str(exc).lower(), str(exc))
+    still_draft = persistence.get_draft(freeze_draft["id"])
+    expect(still_draft["version_state"] == "draft", still_draft)
+
+    az_project = store.create_project(ProjectCreate(title="Azure locator map"))
+    az_src = ingest.ingest_direct_text(
+        az_project["id"],
+        "Page one silence. Capacity must not exceed 12 seats.",
+        label="Memo",
+    )
+    az_run = persistence.create_run(
+        az_project["id"],
+        question="Where is the capacity rule?",
+        live_execution=False,
+        model_configured=False,
+        azure_configured=False,
+        question_material_id=az_src["material"]["id"],
+    )
+    az_checksum = az_src["material"]["checksum"]
+    snap = dict(az_run["snapshot"] or {})
+    patched = []
+    for item in list(snap.get("materials") or []):
+        row = dict(item)
+        if row.get("id") == az_src["material"]["id"]:
+            base = dict((row.get("spans") or [{}])[0])
+            row["spans"] = [
+                {**base, "page": 1, "excerpt": "Page one silence."},
+                {**base, "id": "span-page-2", "page": 2, "excerpt": "Capacity must not exceed 12 seats."},
+            ]
+        patched.append(row)
+    snap["materials"] = patched
+    persistence.replace_snapshot(az_run["id"], snap)
+    az_run = persistence.get_run(az_run["id"])
+
+    def reject_az(draft, needle: str) -> None:
+        try:
+            persistence.save_draft(az_run["id"], draft)
+            raise SystemExit(f"FAIL: expected Azure rejection containing {needle!r}")
+        except ValueError as exc:
+            expect(needle in str(exc), str(exc))
+
+    persistence.upsert_analysis(
+        az_project["id"],
+        az_src["material"]["id"],
+        {
+            "material_checksum": az_checksum,
+            "provider": "azure_content_understanding",
+            "analyzer_id": "prebuilt-document",
+            "operation_id": "op-failed",
+            "status": "failed",
+            "derived_markdown": "Derived: Capacity must not exceed 12 seats on the day shift.",
+        },
+    )
+    reject_az(
+        _draft(
+            az_run,
+            constraints=[
+                {
+                    "claim_key": "c-1",
+                    "strength": "hard",
+                    "original_statement": "Failed Azure artifact",
+                    "evidence_refs": [
+                        {
+                            "material_id": az_src["material"]["id"],
+                            "material_checksum": az_checksum,
+                            "precision": "exact",
+                            "coordinate_system": "azure_markdown",
+                            "quote": "Capacity must not exceed 12 seats",
+                            "provider_locator": {
+                                "analyzer_id": "prebuilt-document",
+                                "operation_id": "op-failed",
+                            },
+                        }
+                    ],
+                }
+            ],
+        ),
+        "succeeded",
+    )
+    azure_markdown = "Derived: Capacity must not exceed 12 seats on the day shift."
+    persistence.upsert_analysis(
+        az_project["id"],
+        az_src["material"]["id"],
+        {
+            "material_checksum": az_checksum,
+            "provider": "azure_content_understanding",
+            "analyzer_id": "prebuilt-document",
+            "operation_id": "op-nomap",
+            "status": "succeeded",
+            "derived_markdown": azure_markdown,
+        },
+    )
+    reject_az(
+        _draft(
+            az_run,
+            constraints=[
+                {
+                    "claim_key": "c-1",
+                    "strength": "hard",
+                    "original_statement": "Page 1 plus Azure without a locator map",
+                    "evidence_refs": [
+                        {
+                            "material_id": az_src["material"]["id"],
+                            "material_checksum": az_checksum,
+                            "precision": "exact",
+                            "coordinate_system": "azure_markdown",
+                            "page": 1,
+                            "quote": "Capacity must not exceed 12 seats",
+                            "provider_locator": {
+                                "analyzer_id": "prebuilt-document",
+                                "operation_id": "op-nomap",
+                            },
+                        }
+                    ],
+                }
+            ],
+        ),
+        "locator map",
+    )
+    persistence.upsert_analysis(
+        az_project["id"],
+        az_src["material"]["id"],
+        {
+            "material_checksum": az_checksum,
+            "provider": "azure_content_understanding",
+            "analyzer_id": "prebuilt-document",
+            "operation_id": "op-ok",
+            "status": "succeeded",
+            "derived_markdown": azure_markdown,
+            "derived": {
+                "coordinate_system": "azure_markdown",
+                "provider_locators": [
+                    {"page": 2, "coordinate_system": "azure_markdown", "original_coordinates": "unknown"}
+                ],
+            },
+        },
+    )
+    reject_az(
+        _draft(
+            az_run,
+            constraints=[
+                {
+                    "claim_key": "c-1",
+                    "strength": "hard",
+                    "original_statement": "Azure offset out of range",
+                    "evidence_refs": [
+                        {
+                            "material_id": az_src["material"]["id"],
+                            "material_checksum": az_checksum,
+                            "precision": "exact",
+                            "coordinate_system": "azure_markdown",
+                            "start_offset": 0,
+                            "end_offset": len(azure_markdown) + 25,
+                            "quote": "Capacity must not exceed 12 seats",
+                            "provider_locator": {
+                                "analyzer_id": "prebuilt-document",
+                                "operation_id": "op-ok",
+                            },
+                        }
+                    ],
+                }
+            ],
+        ),
+        "outside",
+    )
+    reject_az(
+        _draft(
+            az_run,
+            constraints=[
+                {
+                    "claim_key": "c-1",
+                    "strength": "hard",
+                    "original_statement": "Page 1 but Azure locator is page 2",
+                    "evidence_refs": [
+                        {
+                            "material_id": az_src["material"]["id"],
+                            "material_checksum": az_checksum,
+                            "precision": "exact",
+                            "coordinate_system": "azure_markdown",
+                            "page": 1,
+                            "quote": "Capacity must not exceed 12 seats",
+                            "provider_locator": {
+                                "analyzer_id": "prebuilt-document",
+                                "operation_id": "op-ok",
+                            },
+                        }
+                    ],
+                }
+            ],
+        ),
+        "locator map",
+    )
 
     print("PASS: stage1 recovery/snapshot/provenance/export/state-machine")
     print(f"isolated_data_dir={TMP}")

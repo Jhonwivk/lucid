@@ -209,6 +209,19 @@ def snapshot_of(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def assert_snapshot_bytes(run: dict[str, Any]) -> None:
+    """Re-read every frozen file. Missing, copy_error, or checksum mismatch fail."""
+    materials = list_snapshot_materials(run)
+    if not materials:
+        raise SnapshotIntegrityError("snapshot materials are missing")
+    for material in materials:
+        if material.get("copy_error"):
+            raise SnapshotIntegrityError(f"snapshot copy failed for {material.get('id')}")
+        if not material.get("snapshot_path"):
+            raise SnapshotIntegrityError(f"snapshot file is missing for {material.get('id')}")
+        read_snapshot_bytes(run, material)
+
+
 def list_snapshot_materials(run: dict[str, Any]) -> list[dict[str, Any]]:
     return list(snapshot_of(run)["materials"])
 

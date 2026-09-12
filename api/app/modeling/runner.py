@@ -12,7 +12,7 @@ from __future__ import annotations
 import contextvars
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from langgraph.errors import GraphInterrupt
@@ -199,7 +199,7 @@ def _spawn(run_id: str, resume: str | None) -> None:
 
 
 def _deadline_iso(seconds: int) -> str:
-    return (datetime.now(timezone.utc) + timedelta(seconds=max(5, seconds))).isoformat()
+    return persistence.execution_deadline_iso(seconds)
 
 
 def _seconds_remaining(deadline_iso: str | None) -> float:
@@ -279,19 +279,25 @@ def _execute(run_id: str, resume: str | None) -> None:
         if fingerprint != run["evidence_fingerprint"] and resume is None:
             persistence.update_run(run_id, stale_input=True)
         wall_seconds = int(run.get("max_wall_seconds") or 180)
+        human_resume = resume not in {None, "__continue__"}
+        existing_deadline = run.get("wall_deadline_at")
+        if human_resume:
+            deadline = existing_deadline if existing_deadline and str(existing_deadline) >= utc_now() else _deadline_iso(wall_seconds)
+        else:
+            deadline = existing_deadline or _deadline_iso(wall_seconds)
         if run["status"] != "running":
             persistence.update_run(
                 run_id,
                 status="running",
                 started_at=run["started_at"] or utc_now(),
-                wall_deadline_at=run.get("wall_deadline_at") or _deadline_iso(wall_seconds),
+                wall_deadline_at=deadline,
                 heartbeat_at=utc_now(),
             )
         else:
             persistence.update_run(
                 run_id,
                 started_at=run["started_at"] or utc_now(),
-                wall_deadline_at=run.get("wall_deadline_at") or _deadline_iso(wall_seconds),
+                wall_deadline_at=deadline,
                 heartbeat_at=utc_now(),
             )
         ctx = RunContext(
@@ -351,7 +357,7 @@ def _execute(run_id: str, resume: str | None) -> None:
         try:
             result = _invoke_with_deadline(graph, payload, config, run_id, run.get("wall_deadline_at"))
         except GraphInterrupt:
-            _finish(run_id, status="waiting_for_user")
+            _finish(run_id, status="waiting_for_user", wall_deadline_at=None)
             persistence.append_event(run_id, kind="status", title="Waiting for clarification")
             return
         state = graph.get_state(config)
@@ -360,7 +366,7 @@ def _execute(run_id: str, resume: str | None) -> None:
             interrupts.extend(getattr(task, "interrupts", ()) or ())
         run_after = persistence.get_run(run_id)
         if interrupts and not (run_after.get("drafts") or []):
-            _finish(run_id, status="waiting_for_user")
+            _finish(run_id, status="waiting_for_user", wall_deadline_at=None)
             persistence.append_event(
                 run_id,
                 kind="status",

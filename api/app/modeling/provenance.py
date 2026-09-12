@@ -229,6 +229,38 @@ def _snapshot_text(run: dict[str, Any], material: dict[str, Any]) -> str | None:
         return None
 
 
+def _claimed_original_locator(ref: EvidenceRef) -> bool:
+    return any(value is not None for value in (ref.page, ref.sheet, ref.cell_ref, ref.region))
+
+
+def _provider_locators(cached: dict[str, Any]) -> list[dict[str, Any]]:
+    derived = cached.get("derived")
+    if not isinstance(derived, dict):
+        return []
+    locators = derived.get("provider_locators")
+    if not isinstance(locators, list):
+        return []
+    return [item for item in locators if isinstance(item, dict)]
+
+
+def _locator_map_matches(locators: list[dict[str, Any]], ref: EvidenceRef) -> bool:
+    for item in locators:
+        if ref.page is not None and item.get("page") != ref.page:
+            continue
+        if ref.sheet:
+            if not item.get("sheet") or _norm_sheet(item.get("sheet")) != _norm_sheet(ref.sheet):
+                continue
+        if ref.cell_ref:
+            cell = item.get("cell_ref") or item.get("cell")
+            if not cell or str(cell).casefold() != str(ref.cell_ref).casefold():
+                continue
+        if ref.region:
+            if _region_key(item.get("region")) != _region_key(ref.region):
+                continue
+        return True
+    return False
+
+
 def _derived_markdown(run: dict[str, Any], material: dict[str, Any], ref: EvidenceRef) -> dict[str, Any] | None:
     from . import persistence
 
@@ -350,6 +382,8 @@ def validate_ref(run: dict[str, Any], ref: EvidenceRef) -> str | None:
             if len(hits) > 1:
                 return "page/sheet/cell_ref/region is not unique in this snapshot"
             chosen = hits[0]
+        elif ref.coordinate_system == "azure_markdown":
+            chosen = None
         elif ref.precision not in {"whole_source", "unresolved"} or ref.start_offset is not None:
             if ref.start_offset is None:
                 return "without source_span_id, page/sheet/cell_ref/region must uniquely match a snapshot span"
@@ -358,7 +392,7 @@ def validate_ref(run: dict[str, Any], ref: EvidenceRef) -> str | None:
     if locator_error:
         return locator_error
 
-    if ref.start_offset is not None and ref.end_offset is not None:
+    if ref.coordinate_system != "azure_markdown" and ref.start_offset is not None and ref.end_offset is not None:
         if ref.start_offset < 0 or ref.end_offset < ref.start_offset:
             return "offset range is invalid"
         if chosen and chosen.get("start_offset") is not None and chosen.get("end_offset") is not None:
@@ -375,7 +409,20 @@ def validate_ref(run: dict[str, Any], ref: EvidenceRef) -> str | None:
         cached = _derived_markdown(run, material, ref)
         if cached is None:
             return "azure_markdown evidence requires analyzer_id/operation_id and a persisted derived artifact"
+        if str(cached.get("status") or "") != "succeeded":
+            return "azure_markdown evidence requires a succeeded analysis artifact"
         markdown = str(cached.get("derived_markdown") or "")
+        if ref.start_offset is not None and ref.end_offset is not None:
+            if ref.start_offset < 0 or ref.end_offset < ref.start_offset:
+                return "offset range is invalid"
+            if ref.end_offset > len(markdown):
+                return "azure_markdown offset is outside the derived markdown"
+        locators = _provider_locators(cached)
+        if _claimed_original_locator(ref):
+            if not locators:
+                return "azure_markdown plus original page/sheet/cell/region requires a persisted locator map"
+            if not _locator_map_matches(locators, ref):
+                return "original locator does not match the persisted Azure locator map"
         if ref.quote and ref.precision == "exact":
             if ref.start_offset is not None and ref.end_offset is not None:
                 if ref.quote not in markdown[ref.start_offset:ref.end_offset]:

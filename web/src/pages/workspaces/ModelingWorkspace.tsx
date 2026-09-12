@@ -29,6 +29,7 @@ import {
 } from '../../lib/format'
 import {
   materialFromSnapshot,
+  selectDraftForRun,
   selectLatestModelingRun,
   snapshotRunIdForSelection,
 } from '../../lib/sourceView'
@@ -120,11 +121,16 @@ export function ModelingWorkspace({
     ? { ...latestFromList, ...polledRun }
     : latestFromList
   const latestRunId = latestRun?.id ?? null
-  const latestDraft = useMemo(() => {
-    if (!latestRunId) return drafts[drafts.length - 1] ?? null
-    const forRun = drafts.filter((item) => item.run_id === latestRunId)
-    return forRun[forRun.length - 1] ?? drafts[drafts.length - 1] ?? null
-  }, [drafts, latestRunId])
+  const latestDraft = useMemo(() => selectDraftForRun(drafts, latestRunId), [drafts, latestRunId])
+  const canMutateDraft = Boolean(
+    latestDraft
+    && latestRunId
+    && latestDraft.run_id === latestRunId
+    && latestDraft.version_state !== 'confirmed',
+  )
+  const runInFlight = Boolean(
+    latestRun && (ACTIVE.has(latestRun.status) || latestRun.status === 'waiting_for_user'),
+  )
   const pending = latestRun?.clarifications.find((item) => item.status === 'pending') ?? null
   const snapshotMaterials = latestRun?.snapshot?.materials
   const selectedSnapshot = snapshotMaterials?.find((item) => item.id === selectedId) ?? null
@@ -233,6 +239,7 @@ export function ModelingWorkspace({
   }
 
   async function onReview(claim: ModelingClaim, action: string, edited?: string) {
+    if (!canMutateDraft) return
     setBusy(true)
     setError(null)
     try {
@@ -255,7 +262,7 @@ export function ModelingWorkspace({
   }
 
   async function onFreeze() {
-    if (!latestDraft || busy) return
+    if (!canMutateDraft || !latestDraft || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -422,7 +429,10 @@ export function ModelingWorkspace({
         <section className="modeling-claims">
           <h2>{t('claims')}</h2>
           {!latestDraft ? (
-            <EmptyState title={t('noDraft')} body={t('noDraftBody')} />
+            <EmptyState
+              title={runInFlight ? t('draftInProgress') : t('noDraft')}
+              body={runInFlight ? t('draftInProgressBody') : latestRun ? t('runHasNoDraftBody') : t('noDraftBody')}
+            />
           ) : (
             <div className="stack">
               {grouped.map((group) => (
@@ -475,10 +485,10 @@ export function ModelingWorkspace({
                         </label>
                       ) : (
                         <div className="review-actions">
-                          <button className="btn btn-secondary" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => void onReview(claim, 'accepted')}>{t('reviewAccept')}</button>
-                          <button className="btn btn-secondary" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => void onReview(claim, 'rejected')}>{t('reviewReject')}</button>
-                          <button className="btn btn-secondary" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => void onReview(claim, 'not_applicable')}>{t('reviewNA')}</button>
-                          <button className="btn btn-ghost" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => { setEditId(claim.id); setEditText(claim.edited_statement || claim.proposed_interpretation || claim.original_statement) }}>{t('editClaim')}</button>
+                          <button className="btn btn-secondary" type="button" disabled={busy || !canMutateDraft} onClick={() => void onReview(claim, 'accepted')}>{t('reviewAccept')}</button>
+                          <button className="btn btn-secondary" type="button" disabled={busy || !canMutateDraft} onClick={() => void onReview(claim, 'rejected')}>{t('reviewReject')}</button>
+                          <button className="btn btn-secondary" type="button" disabled={busy || !canMutateDraft} onClick={() => void onReview(claim, 'not_applicable')}>{t('reviewNA')}</button>
+                          <button className="btn btn-ghost" type="button" disabled={busy || !canMutateDraft} onClick={() => { setEditId(claim.id); setEditText(claim.edited_statement || claim.proposed_interpretation || claim.original_statement) }}>{t('editClaim')}</button>
                           <button className="btn btn-ghost" type="button" onClick={() => void onHistory(claim.id)}>{t('reviewHistory')}</button>
                         </div>
                       )}
@@ -498,7 +508,7 @@ export function ModelingWorkspace({
                 </div>
               ))}
               <p className="muted">{t('freezeNeedsReview')}</p>
-              <button className="btn btn-primary" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => void onFreeze()}>
+              <button className="btn btn-primary" type="button" disabled={busy || !canMutateDraft} onClick={() => void onFreeze()}>
                 {busy ? t('freezing') : t('freezeBaseline')}
               </button>
             </div>

@@ -6,7 +6,7 @@ import json
 import shutil
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db import connect, get_data_dir, utc_now
@@ -15,7 +15,7 @@ from ..schemas import RuleIn, UnderstandingCreate
 from .draft import ModelingDraft
 from .export import REVIEWABLE_CLAIM_KINDS
 from .provenance import INCOMPLETE_COVERAGE, stamp_run_coverage, validate_draft
-from .snapshot import freeze_materials, snapshot_of
+from .snapshot import SnapshotIntegrityError, assert_snapshot_bytes, freeze_materials, snapshot_of
 
 RUN_STATUSES = (
     "queued",
@@ -36,6 +36,15 @@ ACTIVE_RUN_CONFLICT = "an active modeling run already exists for this analysis"
 
 class StaleRunError(store.ConflictError):
     pass
+
+
+# Tests may assign a callback(run_id) that fires after validation and before persist.
+_before_save_draft_persist = None
+
+
+def execution_deadline_iso(seconds: int | None = None) -> str:
+    wall = max(5, int(seconds or 180))
+    return (datetime.now(timezone.utc) + timedelta(seconds=wall)).isoformat()
 
 
 def _row_status(row: Any) -> str:
@@ -554,6 +563,23 @@ def append_event(
             writable = run_is_writable(run)
             if not writable and not allow_terminal:
                 raise StaleRunError(f"{run['status']} run cannot accept further events")
+            if writable:
+                cursor = conn.execute(
+                    """
+                    UPDATE modeling_run
+                    SET heartbeat_at = ?, updated_at = ?
+                    WHERE id = ?
+                      AND status IN ('queued','running','waiting_for_user')
+                      AND IFNULL(cancel_requested, 0) = 0
+                    """,
+                    (utc_now(), utc_now(), run_id),
+                )
+                if cursor.rowcount != 1:
+                    if not allow_terminal:
+                        raise StaleRunError(f"{run['status']} run cannot accept further events")
+                    writable = False
+            if not writable and not allow_terminal:
+                raise StaleRunError(f"{run['status']} run cannot accept further events")
             conn.execute(
                 """
                 INSERT INTO modeling_run_event (
@@ -571,16 +597,14 @@ def append_event(
                     utc_now(),
                 ),
             )
-            if writable:
-                conn.execute(
-                    "UPDATE modeling_run SET heartbeat_at = ?, updated_at = ? WHERE id = ?",
-                    (utc_now(), utc_now(), run_id),
-                )
     finally:
         conn.close()
 
 
 def update_run(run_id: str, **fields: Any) -> dict[str, Any]:
+    fields = dict(fields)
+    if fields.get("status") == "waiting_for_user" and "wall_deadline_at" not in fields:
+        fields["wall_deadline_at"] = None
     allowed = {
         "status",
         "coverage_json",
@@ -762,10 +786,19 @@ def increment_tool_count(run_id: str) -> int:
             nxt = int(row["tool_call_count"]) + 1
             if nxt > int(row["max_tool_calls"]):
                 raise StaleRunError("tool budget exhausted")
-            conn.execute(
-                "UPDATE modeling_run SET tool_call_count = ?, heartbeat_at = ?, updated_at = ? WHERE id = ?",
-                (nxt, utc_now(), utc_now(), run_id),
+            now = utc_now()
+            cursor = conn.execute(
+                """
+                UPDATE modeling_run
+                SET tool_call_count = ?, heartbeat_at = ?, updated_at = ?
+                WHERE id = ?
+                  AND status IN ('queued','running','waiting_for_user')
+                  AND IFNULL(cancel_requested, 0) = 0
+                """,
+                (nxt, now, now, run_id),
             )
+            if cursor.rowcount != 1:
+                raise StaleRunError("run left a writable status before a tool write")
             return nxt
     finally:
         conn.close()
@@ -788,10 +821,19 @@ def update_coverage(run_id: str, material_id: str, **changes: Any) -> None:
                     break
             if not found:
                 coverage.append({"material_id": material_id, **changes})
-            conn.execute(
-                "UPDATE modeling_run SET coverage_json = ?, updated_at = ? WHERE id = ?",
-                (_dump(coverage), utc_now(), run_id),
+            now = utc_now()
+            cursor = conn.execute(
+                """
+                UPDATE modeling_run
+                SET coverage_json = ?, heartbeat_at = ?, updated_at = ?
+                WHERE id = ?
+                  AND status IN ('queued','running','waiting_for_user')
+                  AND IFNULL(cancel_requested, 0) = 0
+                """,
+                (_dump(coverage), now, now, run_id),
             )
+            if cursor.rowcount != 1:
+                raise StaleRunError("run left a writable status before coverage could be updated")
     finally:
         conn.close()
 
@@ -971,13 +1013,17 @@ def claim_resume(run_id: str, answer: str) -> dict[str, Any]:
                 raise store.ConflictError("run has no pending clarification")
             claim_id = _new_id()
             now = utc_now()
+            wall = execution_deadline_iso(
+                row["max_wall_seconds"] if "max_wall_seconds" in set(row.keys()) else 180
+            )
             cursor = conn.execute(
                 """
                 UPDATE modeling_run
-                SET status = 'running', resume_claim_id = ?, heartbeat_at = ?, updated_at = ?
+                SET status = 'running', resume_claim_id = ?, heartbeat_at = ?,
+                    updated_at = ?, wall_deadline_at = ?
                 WHERE id = ? AND status = 'waiting_for_user'
                 """,
-                (claim_id, now, now, run_id),
+                (claim_id, now, now, wall, run_id),
             )
             if cursor.rowcount != 1:
                 raise store.ConflictError("duplicate or conflicting resume")
@@ -997,7 +1043,8 @@ def rollback_resume(run_id: str, claim_id: str | None) -> dict[str, Any]:
             cursor = conn.execute(
                 """
                 UPDATE modeling_run
-                SET status = 'waiting_for_user', resume_claim_id = NULL, updated_at = ?
+                SET status = 'waiting_for_user', resume_claim_id = NULL,
+                    updated_at = ?, wall_deadline_at = NULL
                 WHERE id = ? AND status = 'running' AND resume_claim_id = ?
                 """,
                 (now, run_id, claim_id),
@@ -1183,10 +1230,34 @@ def save_draft(run_id: str, draft: ModelingDraft, *, completeness: str | None = 
                 "Draft marked complete while one or more sources are still incomplete."
             )
         draft = ModelingDraft.model_validate(payload)
+    hook = _before_save_draft_persist
+    if callable(hook):
+        hook(run_id)
     project_id = run["project_id"]
     conn = connect()
+    previous_isolation = conn.isolation_level
+    draft_id = None
     try:
-        with conn:
+        conn.isolation_level = None
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute("SELECT * FROM modeling_run WHERE id = ?", (run_id,)).fetchone()
+            if row is None:
+                raise store.NotFoundError("modeling run not found")
+            _require_writable_run(row, action="publish a draft")
+            now = utc_now()
+            cursor = conn.execute(
+                """
+                UPDATE modeling_run
+                SET heartbeat_at = ?, updated_at = ?
+                WHERE id = ?
+                  AND status IN ('queued','running','waiting_for_user')
+                  AND IFNULL(cancel_requested, 0) = 0
+                """,
+                (now, now, run_id),
+            )
+            if cursor.rowcount != 1:
+                raise StaleRunError("run left a writable status before the draft could be saved")
             understanding = _persist_understanding(conn, project_id, draft, update_project_head=False)
             parent = conn.execute(
                 """
@@ -1198,7 +1269,6 @@ def save_draft(run_id: str, draft: ModelingDraft, *, completeness: str | None = 
             ).fetchone()
             revision_no = 1 if parent is None else int(parent["revision_no"]) + 1
             draft_id = _new_id()
-            now = utc_now()
             conn.execute(
                 """
                 INSERT INTO modeling_draft (
@@ -1239,8 +1309,13 @@ def save_draft(run_id: str, draft: ModelingDraft, *, completeness: str | None = 
                 entity_id=draft_id,
                 summary=f"Stored modeling draft v{revision_no} ({draft.completeness})",
             )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         return get_draft(draft_id)
     finally:
+        conn.isolation_level = previous_isolation
         conn.close()
 
 
@@ -1610,6 +1685,10 @@ def freeze_baseline(project_id: str, draft_id: str) -> dict[str, Any]:
         raise StaleRunError("cancelled or failed runs cannot freeze a baseline")
     if run["stale_input"]:
         raise StaleRunError("stale_input: frozen snapshot is no longer valid for this run")
+    try:
+        assert_snapshot_bytes(run)
+    except SnapshotIntegrityError as exc:
+        raise store.ConflictError(f"stale_input: {exc}") from exc
     project = store.get_project(project_id)
     latest_run_id = (project.get("latest") or {}).get("modeling_run_id") or project.get("latest_modeling_run_id")
     if latest_run_id and latest_run_id != run["id"]:
