@@ -144,8 +144,8 @@ export function AnalysesPage() {
           <div className="analysis-board">
             <div className="board-heading">
               <div>
-                <h1>{t('analysesTitle')}</h1>
-                <p className="lede">{t('analysesIntro')}</p>
+                <h1>{isZh ? '材料收集' : 'Materials'}</h1>
+                <p className="lede">{isZh ? '添加和整理决策所需的证据材料，LUCID 会将其整理为可审查的建模输入。' : 'Add and organize the evidence behind a decision so it can become a reviewable model input.'}</p>
               </div>
               <button className="btn btn-primary" type="button" onClick={openComposer}>
                 + {t('startAnalysis')}
@@ -162,7 +162,9 @@ export function AnalysesPage() {
                 {(['all', 'mine', 'demo', 'template'] as const).map((value) => <button key={value} type="button" className="filter-btn" aria-pressed={origin === value} onClick={() => setOrigin(value)}>{value === 'all' ? t('all') : value === 'mine' ? t('mine') : value === 'demo' ? t('demo') : t('templateFixture')}</button>)}
               </div>
             </div>
-            <div className="case-heading"><div><h2 id="template-heading">{t('templates')}</h2><p className="muted">{t('templatesIntro')}</p></div><span className="fixture-note">{t('fixtureNote')}</span></div>
+            <div className="case-heading"><div><h2 id="template-heading">{isZh ? '我的分析' : 'My analyses'}</h2><p className="muted">{isZh ? '每个窗口都连接到真实材料、建模和求解记录。' : 'Each window connects to real materials, modeling and solve records.'}</p></div></div>
+            {state === 'ready' && visible.length > 0 ? <div className="analysis-card-grid">{visible.slice(0, 6).map((project) => <AnalysisCard key={project.id} project={project} />)}</div> : null}
+            <div className="case-heading template-library-heading"><div><h2>{t('templates')}</h2><p className="muted">{t('templatesIntro')}</p></div><span className="fixture-note">{t('fixtureNote')}</span></div>
             {templates.state === 'loading' ? <LoadingState label={t('templatesLoading')} rows={3} /> : null}
             {templates.state === 'error' ? <ErrorState title={t('templatesError')} body={templates.error ?? t('templatesError')} action={<button className="btn btn-secondary" type="button" onClick={() => void templates.retry()}>{t('retry')}</button>} /> : null}
             {templates.state === 'ready' ? <div className="template-grid">{templates.templates.map((template) => <TemplateRow key={template.id} template={template} busy={templateBusy === template.id} disabled={templateBusy !== null} onUse={() => void onUseTemplate(template.id)} />)}</div> : null}
@@ -287,6 +289,20 @@ function TemplateRow({
       <button className="btn btn-secondary" type="button" disabled={disabled} onClick={onUse}>
         {busy ? t('instantiating') : t('useTemplate')}
       </button>
+    </article>
+  )
+}
+
+function AnalysisCard({ project }: { project: ProjectSummary }) {
+  const { locale, t } = useI18n()
+  const template = isTemplateProject(project)
+  return (
+    <article className="analysis-card">
+      <div className="analysis-card-top"><span className={`analysis-card-status ${project.workflow_maturity === 'results' ? 'ready' : ''}`}><i />{maturityLabel(project.workflow_maturity, t)}</span><span className="analysis-card-menu">···</span></div>
+      <h3>{project.title}</h3>
+      <p>{project.summary ?? project.decision_question ?? t('analysesIntro')}</p>
+      <div className="analysis-card-evidence"><span>▧</span><span><strong>{template ? t('templateFixture') : t('mine')}</strong><small>{latestCue(project, t)}</small></span></div>
+      <div className="analysis-card-footer"><small>{formatTimestamp(project.updated_at, locale, t)}</small><Link className="btn btn-secondary" to={`/analyses/${project.id}/modeling`}>{t('continue')} →</Link></div>
     </article>
   )
 }
