@@ -218,7 +218,7 @@ export function AnalysesPage() {
             />
           ) : null}
           {templates.state === 'ready' ? (
-            <div className="template-ledger">
+            <div className="template-grid">
               {templates.templates.map((template) => (
                 <TemplateRow
                   key={template.id}
@@ -351,6 +351,7 @@ function TemplateRow({
       : template.category === 'allocation'
         ? t('allocation')
         : t('scheduling')
+  const executable = template.id === 'training-schedule' || template.id === 'product-portfolio-selection'
 
   return (
     <article className="template-row">
@@ -358,12 +359,14 @@ function TemplateRow({
         <div className="template-kicker">
           <span>{category}</span>
           <span>{template.source_count} {t('sources')}</span>
+          <span className={executable ? 'template-complete' : 'template-review'}>{executable ? t('completeCase') : t('evidencePack')}</span>
         </div>
         <h3>{name}</h3>
         <p>{description}</p>
         <div className="source-badges" aria-label={`${template.source_count} ${t('sources')}`}>
           {template.source_types.map((source) => <span key={source}>{source}</span>)}
         </div>
+        <div className="template-facts"><span>{t('materialsCount')} <strong>{template.source_count}</strong></span><span>{executable ? t('caseReady') : t('reviewReady')}</span></div>
       </div>
       <button className="btn btn-secondary" type="button" disabled={disabled} onClick={onUse}>
         {busy ? t('instantiating') : t('useTemplate')}
