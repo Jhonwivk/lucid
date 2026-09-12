@@ -134,153 +134,43 @@ export function AnalysesPage() {
           <span className="workflow-step"><b>4</b><span><strong>{isZh ? '结果洞察' : 'Results'}</strong><small>Results</small></span></span>
         </nav>
 
-        <section className="masthead">
-          <div>
-            <h1>{t('analysesTitle')}</h1>
-            <p className="lede">{t('analysesIntro')}</p>
-            <div className="home-brief">
-              <div className="brief-heading"><span className="brief-dot" /> {isZh ? '当前工作区' : 'Current workspace'}</div>
-              <p>{isZh ? '从一份决策问题开始，逐步整理材料、确认基线，再运行确定性求解。' : 'Start with a decision question, organize evidence, confirm a baseline, then run a deterministic solve.'}</p>
-              <div className="brief-links">
-                <span>{isZh ? '材料' : 'Analyses'} <strong>{projects.length}</strong></span>
-                <span>{isZh ? '可运行案例' : 'Runnable cases'} <strong>{templates.templates.filter((item) => item.id === 'training-schedule' || item.id === 'product-portfolio-selection').length}</strong></span>
+        <section className="concept-layout">
+          <div className="analysis-board">
+            <div className="board-heading">
+              <div>
+                <h1>{t('analysesTitle')}</h1>
+                <p className="lede">{t('analysesIntro')}</p>
+              </div>
+              <button className="btn btn-primary" type="button" onClick={() => document.getElementById('new-analysis-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                + {t('startAnalysis')}
+              </button>
+            </div>
+            <div className="board-tabs" role="tablist" aria-label={isZh ? '分析视图' : 'Analysis views'}>
+              <span className="board-tab active">{isZh ? '我的分析' : 'My analyses'} <strong>{projects.length}</strong></span>
+              <span className="board-tab">{t('templates')}</span>
+              <span className="board-tab">{isZh ? '最近打开' : 'Recently opened'}</span>
+            </div>
+            <div className="board-toolbar">
+              <label className="field search-field"><span>{t('findAnalysis')}</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('searchPlaceholder')} /></label>
+              <div className="filter-row" role="group" aria-label={t('originFilter')}>
+                {(['all', 'mine', 'demo', 'template'] as const).map((value) => <button key={value} type="button" className="filter-btn" aria-pressed={origin === value} onClick={() => setOrigin(value)}>{value === 'all' ? t('all') : value === 'mine' ? t('mine') : value === 'demo' ? t('demo') : t('templateFixture')}</button>)}
               </div>
             </div>
+            <div className="case-heading"><div><h2 id="template-heading">{t('templates')}</h2><p className="muted">{t('templatesIntro')}</p></div><span className="fixture-note">{t('fixtureNote')}</span></div>
+            {templates.state === 'loading' ? <LoadingState label={t('templatesLoading')} rows={3} /> : null}
+            {templates.state === 'error' ? <ErrorState title={t('templatesError')} body={templates.error ?? t('templatesError')} action={<button className="btn btn-secondary" type="button" onClick={() => void templates.retry()}>{t('retry')}</button>} /> : null}
+            {templates.state === 'ready' ? <div className="template-grid">{templates.templates.map((template) => <TemplateRow key={template.id} template={template} busy={templateBusy === template.id} disabled={templateBusy !== null} onUse={() => void onUseTemplate(template.id)} />)}</div> : null}
+            {templateError ? <p className="template-error" role="alert">{templateError}</p> : null}
           </div>
-          <form className="composer" onSubmit={onCreate}>
-            <h2>{t('startAnalysis')}</h2>
-            <p>{t('startAnalysisHint')}</p>
-            <label className="field">
-              <span>{t('title')}</span>
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                required
-                maxLength={200}
-                placeholder={t('titlePlaceholder')}
-              />
-            </label>
-            <label className="field">
-              <span>{t('decisionQuestion')}</span>
-              <textarea
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                required
-                maxLength={8000}
-                placeholder={t('decisionQuestionPlaceholder')}
-              />
-            </label>
-            <label className="field">
-              <span>{t('pasteTextOptional')}</span>
-              <textarea
-                value={pasted}
-                onChange={(event) => setPasted(event.target.value)}
-                maxLength={20000}
-              />
-            </label>
-            <div
-              className={`drop-zone${dragging ? ' over' : ''}`}
-              onDragOver={(event: DragEvent) => {
-                event.preventDefault()
-                setDragging(true)
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(event: DragEvent) => {
-                event.preventDefault()
-                setDragging(false)
-                const next = Array.from(event.dataTransfer.files)
-                if (next.length) setFiles(next)
-              }}
-            >
-              <label className="field">
-                <span>{t('filesOptional')}</span>
-                <input
-                  type="file"
-                  multiple
-                  accept=".txt,.md,.markdown,.pdf,.csv,.xlsx,.png,.jpg,.jpeg,.json,.docx,.pptx,text/plain,text/markdown,text/csv,application/pdf,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg"
-                  onChange={(event) => setFiles(event.target.files ? Array.from(event.target.files) : [])}
-                />
-              </label>
-              <p className="muted">
-                {t('dropFiles')}. {t('questionOnlyOk')}
-                {files.length ? ` · ${files.length} ${t('filesSelected')}` : ''}
-              </p>
-            </div>
-            {createError ? <p className="muted" role="alert">{createError}</p> : null}
-            <button className="btn btn-primary" type="submit" disabled={creating || !title.trim() || !question.trim()}>
-              {creating ? t('creating') : t('createAndContinue')}
-            </button>
-          </form>
+
+          <aside className="decision-brief" aria-label={isZh ? '决策简报' : 'Decision brief'}>
+            <div className="brief-topline"><span className="brief-icon">↗</span><h2>{isZh ? '决策简报' : 'Decision brief'}</h2></div>
+            <p className="brief-intro">{isZh ? '从证据到结论，聚焦当前最重要的决策。' : 'Move from evidence to a clear, reviewable decision.'}</p>
+            <div className="brief-section"><div className="brief-section-title">{isZh ? '最近的分析' : 'Recent analyses'} <span>{projects.length}</span></div>{visible.slice(0, 3).map((project) => <Link key={project.id} className="brief-project" to={`/analyses/${project.id}/modeling`}><span className="brief-project-mark">{isTemplateProject(project) ? '◆' : '○'}</span><span><strong>{project.title}</strong><small>{latestCue(project, t)}</small></span><span className="brief-arrow">→</span></Link>)}{state === 'ready' && visible.length === 0 ? <p className="muted">{t('noMatches')}</p> : null}</div>
+            <div className="brief-section"><div className="brief-section-title">{isZh ? '下一步行动' : 'Next action'}</div><p className="next-action">{isZh ? '选择一个完整案例，或输入自己的决策问题开始。' : 'Choose a runnable case or enter your own decision question to begin.'}</p><button className="btn btn-primary brief-action" type="button" onClick={() => document.getElementById('new-analysis-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>{isZh ? '添加材料' : 'Add materials'} →</button></div>
+            <form id="new-analysis-form" className="composer brief-composer" onSubmit={onCreate}><h3>{t('startAnalysis')}</h3><p>{t('startAnalysisHint')}</p><label className="field"><span>{t('title')}</span><input value={title} onChange={(event) => setTitle(event.target.value)} required maxLength={200} placeholder={t('titlePlaceholder')} /></label><label className="field"><span>{t('decisionQuestion')}</span><textarea value={question} onChange={(event) => setQuestion(event.target.value)} required maxLength={8000} placeholder={t('decisionQuestionPlaceholder')} /></label><label className="field"><span>{t('pasteTextOptional')}</span><textarea value={pasted} onChange={(event) => setPasted(event.target.value)} maxLength={20000} /></label><div className={`drop-zone${dragging ? ' over' : ''}`} onDragOver={(event: DragEvent) => { event.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event: DragEvent) => { event.preventDefault(); setDragging(false); const next = Array.from(event.dataTransfer.files); if (next.length) setFiles(next) }}><label className="field"><span>{t('filesOptional')}</span><input type="file" multiple accept=".txt,.md,.markdown,.pdf,.csv,.xlsx,.png,.jpg,.jpeg,.json,.docx,.pptx,text/plain,text/markdown,text/csv,application/pdf,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/png,image/jpeg" onChange={(event) => setFiles(event.target.files ? Array.from(event.target.files) : [])} /></label><p className="muted">{t('dropFiles')}. {t('questionOnlyOk')}{files.length ? ` · ${files.length} ${t('filesSelected')}` : ''}</p></div>{createError ? <p className="muted" role="alert">{createError}</p> : null}<button className="btn btn-primary" type="submit" disabled={creating || !title.trim() || !question.trim()}>{creating ? t('creating') : t('createAndContinue')}</button></form>
+          </aside>
         </section>
-
-        <section className="template-section" aria-labelledby="template-heading">
-          <div className="section-heading">
-            <div>
-              <h2 id="template-heading">{t('templates')}</h2>
-              <p className="muted">{t('templatesIntro')}</p>
-            </div>
-            <span className="fixture-note">{t('fixtureNote')}</span>
-          </div>
-
-          {templates.state === 'loading' ? (
-            <LoadingState label={t('templatesLoading')} rows={3} />
-          ) : null}
-          {templates.state === 'error' ? (
-            <ErrorState
-              title={t('templatesError')}
-              body={templates.error ?? t('templatesError')}
-              action={
-                <button className="btn btn-secondary" type="button" onClick={() => void templates.retry()}>
-                  {t('retry')}
-                </button>
-              }
-            />
-          ) : null}
-          {templates.state === 'ready' ? (
-            <div className="template-grid">
-              {templates.templates.map((template) => (
-                <TemplateRow
-                  key={template.id}
-                  template={template}
-                  busy={templateBusy === template.id}
-                  disabled={templateBusy !== null}
-                  onUse={() => void onUseTemplate(template.id)}
-                />
-              ))}
-            </div>
-          ) : null}
-          {templateError ? <p className="template-error" role="alert">{templateError}</p> : null}
-        </section>
-
-        <div className="toolbar">
-          <label className="field search-field">
-            <span>{t('findAnalysis')}</span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t('searchPlaceholder')}
-            />
-          </label>
-          <div className="filter-row" role="group" aria-label={t('originFilter')}>
-            {(['all', 'mine', 'demo', 'template'] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                className="filter-btn"
-                aria-pressed={origin === value}
-                onClick={() => setOrigin(value)}
-              >
-                {value === 'all'
-                  ? t('all')
-                  : value === 'mine'
-                    ? t('mine')
-                    : value === 'demo'
-                      ? t('demo')
-                      : t('templateFixture')}
-              </button>
-            ))}
-          </div>
-        </div>
 
         {state === 'loading' ? <LoadingState label={t('loadingAnalyses')} /> : null}
 
