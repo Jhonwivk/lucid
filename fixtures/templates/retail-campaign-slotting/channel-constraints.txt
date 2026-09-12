@@ -1,0 +1,7 @@
+Fictional retail campaign constraints
+
+Homepage has one hero slot per date.
+The Friday homepage slot is blacked out by merchandising.
+Total campaign spend must not exceed 450000.
+Influencer campaigns require a signed creator contract before activation.
+Avoid running more than two customer-facing campaigns on the same date when possible.

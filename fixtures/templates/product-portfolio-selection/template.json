@@ -1,0 +1,53 @@
+{
+  "id": "product-portfolio-selection",
+  "name": {"en": "Product Portfolio Selection", "zh-CN": "产品组合选择"},
+  "category": "portfolio",
+  "description": {
+    "en": "Choose a constrained initiative portfolio under budget, dependency, mandatory-item, and staffing rules.",
+    "zh-CN": "在预算、依赖、必选项和人员约束下选择项目组合。"
+  },
+  "project": {
+    "title": "[TEMPLATE] Product Portfolio Selection / 产品组合选择",
+    "summary": "Fictional template fixture · JSON + Markdown · known semantic ground truth, not LLM interpretation.",
+    "workflow_maturity": "scenarios"
+  },
+  "sources": [
+    {
+      "filename": "initiatives.json", "label": "JSON", "media_type": "application/json", "kind": "table",
+      "notes": "Candidate initiatives and budget attributes.",
+      "spans": [{"key": "candidate-data", "locator_kind": "text_range", "start_offset": 0, "end_offset": 620, "excerpt": "Budget is 12.5 million; REG-02 is mandatory; AI-03 requires DATA-01."}]
+    },
+    {
+      "filename": "strategy.md", "label": "MD", "media_type": "text/markdown", "kind": "document",
+      "notes": "Portfolio strategy constraints.",
+      "spans": [{"key": "strategy-rules", "locator_kind": "text_range", "start_offset": 60, "end_offset": 430, "excerpt": "REG-02 is mandatory; AI-03 depends on DATA-01; OPS-05 external vendor approval is unresolved."}]
+    }
+  ],
+  "understanding": {
+    "summary": "Budget, mandatory initiative, and AI dependency are known; OPS-05 external vendor permission remains unknown.",
+    "version_state": "confirmed",
+    "assumptions": ["Initiative costs are planning estimates in millions / 项目成本单位为百万", "Value scores are comparable within this fixture."],
+    "unknowns": ["External vendor approval for OPS-05 / OPS-05外部供应商是否批准"],
+    "conflicts": ["OPS-05 has a high value score but its external vendor dependency is not approved."],
+    "rules": [
+      {"rule_kind": "hard", "statement": "Portfolio budget ≤ 12.5 million / 组合预算不超过1250万", "review_status": "accepted", "evidence_status": "present", "source_span_key": "candidate-data", "cost": 12.5},
+      {"rule_kind": "hard", "statement": "REG-02 must be selected / REG-02必须入选", "review_status": "accepted", "evidence_status": "present", "source_span_key": "candidate-data", "permission": true},
+      {"rule_kind": "conditional", "statement": "AI-03 requires DATA-01 / 选择AI-03必须同时选择DATA-01", "review_status": "accepted", "evidence_status": "present", "source_span_key": "strategy-rules", "condition_kind": "if_then", "premise_status": "known_true", "premise_text": "AI-03 selected implies DATA-01 selected"},
+      {"rule_kind": "conditional", "statement": "OPS-05 selection requires vendor approval / 选择OPS-05需要供应商批准", "review_status": "needs_clarification", "evidence_status": "unknown", "source_span_key": "strategy-rules", "condition_kind": "if_then", "premise_status": "unknown", "premise_text": "OPS-05 external vendor approved", "permission": null}
+    ]
+  },
+  "scenario": {
+    "name": "FY27 candidate portfolio / FY27候选组合",
+    "notes": "Portfolio formal-model metadata; no solver has run.",
+    "version_state": "confirmed",
+    "formal_model": {"name": "portfolio-fy27", "version_state": "confirmed", "variable_count": 12, "constraint_count": 18, "objective_text": "Maximize value while preserving budget and dependencies / 在预算和依赖约束下最大化价值", "notes": "Binary selection model metadata only."},
+    "rules": [
+      {"rule_kind": "soft", "statement": "Prefer at least 1.0 million contingency / 尽量保留至少100万机动预算", "review_status": "accepted", "evidence_status": "present", "source_span_key": "strategy-rules", "cost": 1.0}
+    ]
+  },
+  "solve_run": {
+    "run_state": "pending",
+    "message": "Template fixture only: portfolio solver not executed / 模板数据：尚未执行组合求解器",
+    "candidate": {"label": "unexecuted-template", "objective_value": null, "is_selected": null, "notes": "No computed portfolio exists yet."}
+  }
+}

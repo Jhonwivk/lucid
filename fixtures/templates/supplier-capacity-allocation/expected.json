@@ -1,0 +1,13 @@
+{
+  "materials": 3,
+  "source_spans": 3,
+  "understandings": 1,
+  "understanding_rules": 3,
+  "scenarios": 1,
+  "scenario_revisions": 1,
+  "scenario_rules": 2,
+  "solve_runs": 1,
+  "media_types": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv", "application/pdf"],
+  "must_preserve_null": ["permission"],
+  "solve_execution": "not_executed"
+}

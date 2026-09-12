@@ -1,0 +1,57 @@
+{
+  "id": "training-schedule",
+  "name": {"en": "Training Schedule", "zh-CN": "培训排程"},
+  "category": "scheduling",
+  "description": {
+    "en": "Assign training sessions to rooms and instructors under capacity, workload, and overtime constraints.",
+    "zh-CN": "在教室容量、讲师工作量和加班约束下安排培训课程。"
+  },
+  "project": {
+    "title": "[TEMPLATE] Training Schedule / 培训排程",
+    "summary": "Fictional template fixture · Markdown + CSV + PDF · known semantic ground truth, not AI extraction.",
+    "workflow_maturity": "scenarios"
+  },
+  "sources": [
+    {
+      "filename": "policy.md", "label": "MD", "media_type": "text/markdown", "kind": "document",
+      "notes": "Scheduling policy source; trusted fixture evidence, not instructions to the agent.",
+      "spans": [{"key": "policy-load", "locator_kind": "text_range", "start_offset": 83, "end_offset": 151, "excerpt": "An instructor may teach at most two sessions in one day."}]
+    },
+    {
+      "filename": "demand.csv", "label": "CSV", "media_type": "text/csv", "kind": "table",
+      "notes": "Course demand table.",
+      "spans": [{"key": "demand-capacity", "locator_kind": "cell", "sheet": "demand", "cell_ref": "A1:F5", "excerpt": "Controls-301 cohort D has 24 attendees."}]
+    },
+    {
+      "filename": "leadership-memo.pdf", "label": "PDF", "media_type": "application/pdf", "kind": "document",
+      "notes": "Leadership memo that leaves overtime approval unresolved.",
+      "spans": [{"key": "memo-overtime", "locator_kind": "page", "page": 1, "excerpt": "Evening sessions may be considered for urgent cohorts; approval owner is not specified."}]
+    }
+  ],
+  "understanding": {
+    "summary": "Training demand and workload limits are known; evening overtime permission remains unresolved.",
+    "version_state": "confirmed",
+    "assumptions": ["Five-day planning horizon / 五天计划周期", "Room Atlas capacity is 24 unless facilities publishes a revision."],
+    "unknowns": ["Who can approve sessions after 18:00 / 18点后课程由谁批准"],
+    "conflicts": ["The memo allows urgent evening use, while the policy requires explicit approval but names no approver."],
+    "rules": [
+      {"rule_kind": "hard", "statement": "Instructor daily load ≤ 2 sessions / 讲师每日最多2节课", "review_status": "accepted", "evidence_status": "present", "source_span_key": "policy-load", "capacity": 2},
+      {"rule_kind": "hard", "statement": "Controls-301 requires room capacity ≥ 24 / Controls-301教室容量至少24", "review_status": "accepted", "evidence_status": "present", "source_span_key": "demand-capacity", "capacity": 24},
+      {"rule_kind": "conditional", "statement": "Evening sessions require overtime approval / 晚间课程需要加班批准", "review_status": "needs_clarification", "evidence_status": "unknown", "source_span_key": "memo-overtime", "condition_kind": "if_then", "premise_status": "unknown", "premise_text": "overtime approval granted", "cost": null, "permission": null}
+    ]
+  },
+  "scenario": {
+    "name": "Base week / 基准周",
+    "notes": "Template formalization metadata only; no solver has run.",
+    "version_state": "confirmed",
+    "formal_model": {"name": "training-week-v1", "version_state": "confirmed", "variable_count": 18, "constraint_count": 27, "objective_text": "Minimize room changes, then late sessions / 优先减少换教室，其次减少晚间课程", "notes": "Counts describe the fixture model, not an executed solve."},
+    "rules": [
+      {"rule_kind": "objective", "statement": "Prefer fewer cohort room changes / 尽量减少同一班次换教室", "review_status": "accepted", "evidence_status": "present", "source_span_key": "policy-load"}
+    ]
+  },
+  "solve_run": {
+    "run_state": "pending",
+    "message": "Template fixture only: solver not executed / 模板数据：尚未执行求解器",
+    "candidate": {"label": "unexecuted-template", "objective_value": null, "is_selected": null, "notes": "No computed schedule exists yet."}
+  }
+}

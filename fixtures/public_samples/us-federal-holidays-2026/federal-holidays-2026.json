@@ -1,0 +1,18 @@
+{
+  "origin": "Reconstructed U.S. federal holiday names for 2026. Public facts, not an official OPM file.",
+  "license": "CC0-1.0",
+  "year": 2026,
+  "holidays": [
+    {"name": "New Year's Day", "date": "2026-01-01"},
+    {"name": "Birthday of Martin Luther King, Jr.", "date": "2026-01-19"},
+    {"name": "Washington's Birthday", "date": "2026-02-16"},
+    {"name": "Memorial Day", "date": "2026-05-25"},
+    {"name": "Juneteenth National Independence Day", "date": "2026-06-19"},
+    {"name": "Independence Day (observed)", "date": "2026-07-03", "note": "July 4 2026 is Saturday; observed Friday."},
+    {"name": "Labor Day", "date": "2026-09-07"},
+    {"name": "Columbus Day", "date": "2026-10-12"},
+    {"name": "Veterans Day", "date": "2026-11-11"},
+    {"name": "Thanksgiving Day", "date": "2026-11-26"},
+    {"name": "Christmas Day", "date": "2026-12-25"}
+  ]
+}

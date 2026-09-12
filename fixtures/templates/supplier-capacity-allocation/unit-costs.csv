@@ -1,0 +1,5 @@
+supplier,part,unit_cost,lead_time_days,min_order
+Alpha,Module-X,8.10,14,200
+Beta,Module-X,7.85,18,250
+Gamma,Module-X,8.40,10,150
+Delta,Module-X,8.25,21,300

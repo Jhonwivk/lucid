@@ -1,0 +1,10 @@
+{
+  "budget_million": 12.5,
+  "initiatives": [
+    {"id":"REG-02","name":"Regulatory telemetry","cost_million":2.2,"value":9,"mandatory":true},
+    {"id":"DATA-01","name":"Unified data foundation","cost_million":3.1,"value":8,"mandatory":false},
+    {"id":"AI-03","name":"Forecast assistant","cost_million":2.8,"value":7,"requires":["DATA-01"]},
+    {"id":"UX-04","name":"Customer portal redesign","cost_million":2.5,"value":6,"mandatory":false},
+    {"id":"OPS-05","name":"Operations automation","cost_million":3.4,"value":8,"mandatory":false}
+  ]
+}

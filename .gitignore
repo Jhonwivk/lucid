@@ -1,0 +1,36 @@
+# Dependencies / build
+web/node_modules/
+web/dist/
+api/.venv/
+**/__pycache__/
+*.py[cod]
+.Python
+
+# Local data
+data/*.db
+data/*.db-*
+data/materials/
+data/backups/
+!data/.gitkeep
+.cache/
+.tmp/
+docs/reports/_probe/
+docs/reports/screenshots/chrome-profile*/
+docs/reports/screenshots/crashes/
+docs/reports/screenshots/home/
+docs/reports/screenshots/tmp/
+
+# Env / secrets
+.env
+.env.local
+*.pem
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+*.swp
+
+# Local leftover binary; image intake never invokes Vision
+api/app/vision/lucid-apple-vision

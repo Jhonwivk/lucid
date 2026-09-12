@@ -1,0 +1,5 @@
+asset,line,criticality,duration_hours,crew_type,preferred_window
+Press-01,Line-A,high,4,mechanical,Tue-AM
+Robot-07,Line-A,medium,2,controls,Wed-PM
+Oven-03,Line-B,high,6,mechanical,Thu-AM
+Conveyor-11,Line-C,medium,3,electrical,Fri-AM

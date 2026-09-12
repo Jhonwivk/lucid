@@ -1,0 +1,9 @@
+{
+  "budget": 450000,
+  "campaigns": [
+    {"id":"C-A","name":"Autumn launch","cost":160000,"channels":["homepage","email"],"priority":9},
+    {"id":"C-B","name":"Member week","cost":125000,"channels":["app","email"],"priority":8},
+    {"id":"C-C","name":"Influencer drop","cost":95000,"channels":["social"],"priority":7,"contract_status":"pending"},
+    {"id":"C-D","name":"Clearance","cost":130000,"channels":["homepage","app"],"priority":6}
+  ]
+}

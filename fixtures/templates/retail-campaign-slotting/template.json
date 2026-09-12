@@ -1,0 +1,57 @@
+{
+  "id": "retail-campaign-slotting",
+  "name": {"en": "Retail Campaign Slotting", "zh-CN": "零售活动档期组合"},
+  "category": "scheduling",
+  "description": {
+    "en": "Place campaigns into channel/date slots under capacity, blackout, spend, contract, and congestion constraints.",
+    "zh-CN": "在容量、禁用档期、预算、合同和活动拥挤约束下安排营销活动。"
+  },
+  "project": {
+    "title": "[TEMPLATE] Retail Campaign Slotting / 零售活动档期组合",
+    "summary": "Fictional template fixture · CSV + JSON + TXT · known semantic ground truth, not AI extraction.",
+    "workflow_maturity": "scenarios"
+  },
+  "sources": [
+    {
+      "filename": "calendar.csv", "label": "CSV", "media_type": "text/csv", "kind": "table",
+      "notes": "Channel slot calendar.",
+      "spans": [{"key": "calendar-slots", "locator_kind": "cell", "sheet": "calendar", "cell_ref": "A1:E6", "excerpt": "Homepage capacity is one and HERO-FRI is blacked out."}]
+    },
+    {
+      "filename": "campaigns.json", "label": "JSON", "media_type": "application/json", "kind": "table",
+      "notes": "Campaign costs, priorities, and channel eligibility.",
+      "spans": [{"key": "campaign-data", "locator_kind": "text_range", "start_offset": 0, "end_offset": 540, "excerpt": "Total campaign budget is 450000; Influencer drop contract_status is pending."}]
+    },
+    {
+      "filename": "channel-constraints.txt", "label": "TXT", "media_type": "text/plain", "kind": "document",
+      "notes": "Channel and activation policy.",
+      "spans": [{"key": "channel-rules", "locator_kind": "text_range", "start_offset": 0, "end_offset": 335, "excerpt": "Homepage has one hero slot; Friday is blacked out; influencer campaigns require signed contracts."}]
+    }
+  ],
+  "understanding": {
+    "summary": "Slot capacities, blackout, and budget are known; influencer contract permission remains unresolved.",
+    "version_state": "confirmed",
+    "assumptions": ["Campaign cost estimates include media spend / 活动成本已包含媒体预算", "Blackout flags override campaign priority."],
+    "unknowns": ["Whether the C-C creator contract is signed / C-C达人合同是否签署"],
+    "conflicts": ["C-D requests homepage exposure but the Friday hero slot is blacked out."],
+    "rules": [
+      {"rule_kind": "hard", "statement": "Homepage hero capacity = 1 per date / 首页Hero位每天容量为1", "review_status": "accepted", "evidence_status": "present", "source_span_key": "calendar-slots", "capacity": 1},
+      {"rule_kind": "hard", "statement": "Total campaign spend ≤ 450000 / 活动总预算不超过450000", "review_status": "accepted", "evidence_status": "present", "source_span_key": "campaign-data", "cost": 450000},
+      {"rule_kind": "conditional", "statement": "Influencer activation requires signed contract / 达人活动上线需要已签合同", "review_status": "needs_clarification", "evidence_status": "unknown", "source_span_key": "channel-rules", "condition_kind": "if_then", "premise_status": "unknown", "premise_text": "creator contract signed", "permission": null}
+    ]
+  },
+  "scenario": {
+    "name": "October launch week / 十月活动周",
+    "notes": "Slotting formal-model metadata only; not a computed campaign calendar.",
+    "version_state": "confirmed",
+    "formal_model": {"name": "campaign-slotting-oct", "version_state": "confirmed", "variable_count": 20, "constraint_count": 29, "objective_text": "Maximize priority-weighted reach while respecting capacity, blackout, budget, and contracts / 在容量、禁用档期、预算和合同约束下最大化优先级加权触达", "notes": "No deterministic solve executed in T05."},
+    "rules": [
+      {"rule_kind": "soft", "statement": "Prefer no more than two customer-facing campaigns per date / 每天尽量不超过两个面向客户的活动", "review_status": "accepted", "evidence_status": "present", "source_span_key": "channel-rules", "capacity": 2}
+    ]
+  },
+  "solve_run": {
+    "run_state": "pending",
+    "message": "Template fixture only: slotting solver not executed / 模板数据：尚未执行档期求解器",
+    "candidate": {"label": "unexecuted-template", "objective_value": null, "is_selected": null, "notes": "No computed campaign calendar exists yet."}
+  }
+}

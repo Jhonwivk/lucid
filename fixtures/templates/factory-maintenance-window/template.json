@@ -1,0 +1,57 @@
+{
+  "id": "factory-maintenance-window",
+  "name": {"en": "Factory Maintenance Window", "zh-CN": "工厂检修窗口排程"},
+  "category": "scheduling",
+  "description": {
+    "en": "Place maintenance work into production windows while respecting line downtime, crew, and shared-equipment limits.",
+    "zh-CN": "在产线停机、班组能力和共享设备约束下安排检修窗口。"
+  },
+  "project": {
+    "title": "[TEMPLATE] Factory Maintenance Window / 工厂检修窗口排程",
+    "summary": "Fictional template fixture · CSV + Markdown + PNG · known semantic ground truth, not image extraction.",
+    "workflow_maturity": "scenarios"
+  },
+  "sources": [
+    {
+      "filename": "assets.csv", "label": "CSV", "media_type": "text/csv", "kind": "table",
+      "notes": "Maintenance job inventory.",
+      "spans": [{"key": "assets-jobs", "locator_kind": "cell", "sheet": "assets", "cell_ref": "A1:F5", "excerpt": "Oven-03 requires six hours of mechanical work on Thursday morning."}]
+    },
+    {
+      "filename": "rules.md", "label": "MD", "media_type": "text/markdown", "kind": "document",
+      "notes": "Plant maintenance policy.",
+      "spans": [{"key": "maint-rules", "locator_kind": "text_range", "start_offset": 70, "end_offset": 330, "excerpt": "At most one high-criticality production line may be offline at the same time; mechanical crew capacity is two."}]
+    },
+    {
+      "filename": "line-layout.png", "label": "PNG", "media_type": "image/png", "kind": "image",
+      "notes": "Synthetic plant layout; region is authored fixture provenance, not vision output.",
+      "spans": [{"key": "crane-zone", "locator_kind": "region", "region": {"x": 0.18, "y": 0.22, "width": 0.61, "height": 0.24}, "excerpt": "Crane C-1 overlaps Line-A and Line-B service zones."}]
+    }
+  ],
+  "understanding": {
+    "summary": "Line downtime and mechanical crew capacity are known; night-shift roster authorization is unresolved.",
+    "version_state": "confirmed",
+    "assumptions": ["Criticality labels are current / 关键度标签为当前版本", "Shared crane layout is unchanged during the planning week."],
+    "unknowns": ["Night-shift crew roster approval / 夜班班组名单是否获批"],
+    "conflicts": ["Oven-03 prefers Thursday morning, overlapping the Thursday 10:00–14:00 production freeze."],
+    "rules": [
+      {"rule_kind": "hard", "statement": "At most one high-criticality line offline concurrently / 同时最多一条高关键产线停机", "review_status": "accepted", "evidence_status": "present", "source_span_key": "maint-rules", "capacity": 1},
+      {"rule_kind": "hard", "statement": "Mechanical crew concurrent capacity = 2 / 机械班组并发能力为2", "review_status": "accepted", "evidence_status": "present", "source_span_key": "maint-rules", "capacity": 2},
+      {"rule_kind": "conditional", "statement": "Night work requires approved crew roster / 夜间检修需要已批准班组", "review_status": "needs_clarification", "evidence_status": "unknown", "source_span_key": "assets-jobs", "condition_kind": "if_then", "premise_status": "unknown", "premise_text": "night crew roster approved", "cost": null, "permission": null}
+    ]
+  },
+  "scenario": {
+    "name": "Week 38 shutdown windows / 第38周停机窗口",
+    "notes": "Fixture formalization; no optimization result has been computed.",
+    "version_state": "confirmed",
+    "formal_model": {"name": "maintenance-w38", "version_state": "confirmed", "variable_count": 22, "constraint_count": 34, "objective_text": "Minimize production disruption and preferred-window misses / 最小化生产影响与偏好窗口偏离", "notes": "Shared crane is modeled as a unary resource."},
+    "rules": [
+      {"rule_kind": "hard", "statement": "Jobs needing crane C-1 may not overlap / 需要C-1吊车的作业不得重叠", "review_status": "accepted", "evidence_status": "present", "source_span_key": "crane-zone"}
+    ]
+  },
+  "solve_run": {
+    "run_state": "pending",
+    "message": "Template fixture only: solver not executed / 模板数据：尚未执行求解器",
+    "candidate": {"label": "unexecuted-template", "objective_value": null, "is_selected": null, "notes": "No computed maintenance plan exists yet."}
+  }
+}

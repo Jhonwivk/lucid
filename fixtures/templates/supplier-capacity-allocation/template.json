@@ -1,0 +1,58 @@
+{
+  "id": "supplier-capacity-allocation",
+  "name": {"en": "Supplier Capacity Allocation", "zh-CN": "供应商产能分配"},
+  "category": "allocation",
+  "description": {
+    "en": "Allocate demand across suppliers under capacity, qualification, concentration, cost, and lead-time constraints.",
+    "zh-CN": "在产能、资质、集中度、成本和交期约束下分配供应商需求。"
+  },
+  "project": {
+    "title": "[TEMPLATE] Supplier Capacity Allocation / 供应商产能分配",
+    "summary": "Fictional template fixture · XLSX + CSV + PDF · known semantic ground truth, not document extraction.",
+    "workflow_maturity": "scenarios"
+  },
+  "sources": [
+    {
+      "filename": "supplier-capacity.xlsx", "label": "XLSX", "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "kind": "table",
+      "notes": "Monthly supplier capacity workbook.",
+      "spans": [{"key": "capacity-sheet", "locator_kind": "cell", "sheet": "Capacity", "cell_ref": "A1:E5", "excerpt": "Alpha monthly capacity is 1200 units; Beta is listed active at 900 units."}]
+    },
+    {
+      "filename": "unit-costs.csv", "label": "CSV", "media_type": "text/csv", "kind": "table",
+      "notes": "Unit costs and lead-time table.",
+      "spans": [{"key": "cost-table", "locator_kind": "cell", "sheet": "unit-costs", "cell_ref": "A1:E5", "excerpt": "Gamma unit cost is 8.40 and lead time is 10 days."}]
+    },
+    {
+      "filename": "quality-note.pdf", "label": "PDF", "media_type": "application/pdf", "kind": "document",
+      "notes": "Quality audit note with unresolved Beta qualification status.",
+      "spans": [{"key": "quality-audit", "locator_kind": "page", "page": 1, "excerpt": "Supplier Beta remains under qualification review; production release authority is not yet recorded."}]
+    }
+  ],
+  "understanding": {
+    "summary": "Capacity and cost data are known; Beta release permission remains unresolved and conflicts with the active flag in the capacity workbook.",
+    "version_state": "confirmed",
+    "assumptions": ["Demand target is 2400 units for the planning month / 计划月需求为2400件", "Listed capacities are gross available capacities."],
+    "unknowns": ["Whether Supplier Beta is released for production / 供应商Beta是否已获量产放行"],
+    "conflicts": ["Capacity workbook lists Beta as active while the quality note says qualification is still under review."],
+    "rules": [
+      {"rule_kind": "hard", "statement": "Alpha monthly allocation cannot exceed 1200 / Alpha月分配不得超过1200", "review_status": "accepted", "evidence_status": "present", "source_span_key": "capacity-sheet", "capacity": 1200},
+      {"rule_kind": "objective", "statement": "Gamma unit cost reference = 8.40 / Gamma单位成本参考为8.40", "review_status": "accepted", "evidence_status": "present", "source_span_key": "cost-table", "cost": 8.4},
+      {"rule_kind": "conditional", "statement": "Beta may receive production allocation only after qualification release / Beta仅在资质放行后可分配量产", "review_status": "needs_clarification", "evidence_status": "conflicted", "source_span_key": "quality-audit", "condition_kind": "if_then", "premise_status": "unknown", "premise_text": "Beta production release approved", "permission": null}
+    ]
+  },
+  "scenario": {
+    "name": "Monthly sourcing baseline / 月度采购基线",
+    "notes": "Allocation model metadata only; no optimization result has been calculated.",
+    "version_state": "confirmed",
+    "formal_model": {"name": "supplier-allocation-monthly", "version_state": "confirmed", "variable_count": 15, "constraint_count": 23, "objective_text": "Minimize landed cost while meeting 2400-unit demand and qualification limits / 满足2400件需求与资质约束下最小化到岸成本", "notes": "Concentration and lead-time constraints are represented in the fixture model metadata."},
+    "rules": [
+      {"rule_kind": "hard", "statement": "No supplier should cover more than 55% of monthly demand / 单一供应商占比不超过55%", "review_status": "accepted", "evidence_status": "present", "source_span_key": "capacity-sheet", "capacity": 0.55},
+      {"rule_kind": "objective", "statement": "Prefer lower cost when qualification and capacity are equivalent / 资质与产能相同时优先低成本", "review_status": "accepted", "evidence_status": "present", "source_span_key": "cost-table"}
+    ]
+  },
+  "solve_run": {
+    "run_state": "pending",
+    "message": "Template fixture only: allocation solver not executed / 模板数据：尚未执行分配求解器",
+    "candidate": {"label": "unexecuted-template", "objective_value": null, "is_selected": null, "notes": "No computed supplier split exists yet."}
+  }
+}

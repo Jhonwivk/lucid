@@ -1,0 +1,58 @@
+{
+  "id": "vehicle-validation-bench",
+  "name": {"en": "Vehicle Validation Bench", "zh-CN": "整车验证台架排程"},
+  "category": "scheduling",
+  "description": {
+    "en": "Schedule vehicle validation jobs across scarce benches, vehicle availability, and qualification constraints.",
+    "zh-CN": "在有限台架、车辆可用性和资质约束下安排整车验证任务。"
+  },
+  "project": {
+    "title": "[TEMPLATE] Vehicle Validation Bench / 整车验证台架排程",
+    "summary": "Fictional automotive template fixture · XLSX + PDF + PNG · known semantic ground truth, not OCR/vision extraction.",
+    "workflow_maturity": "scenarios"
+  },
+  "sources": [
+    {
+      "filename": "validation-plan.xlsx", "label": "XLSX", "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "kind": "table",
+      "notes": "Validation jobs and requested benches.",
+      "spans": [{"key": "plan-jobs", "locator_kind": "cell", "sheet": "Plan", "cell_ref": "A1:F6", "excerpt": "V-204 requests B2 on Friday; V17 is unavailable Thursday."}]
+    },
+    {
+      "filename": "bench-requirements.pdf", "label": "PDF", "media_type": "application/pdf", "kind": "document",
+      "notes": "Bench qualification and reservation requirements.",
+      "spans": [{"key": "bench-hv", "locator_kind": "page", "page": 1, "excerpt": "800 V tests require HV-2 certification. Bench B2 is reserved for calibration Friday morning."}]
+    },
+    {
+      "filename": "bench-layout.png", "label": "PNG", "media_type": "image/png", "kind": "image",
+      "notes": "Synthetic bench layout image; region coordinates are fixture ground truth, not vision output.",
+      "spans": [{"key": "layout-zone", "locator_kind": "region", "region": {"x": 0.56, "y": 0.18, "width": 0.32, "height": 0.44}, "excerpt": "Shared thermal-conditioning zone between B2 and HV-2."}]
+    }
+  ],
+  "understanding": {
+    "summary": "Bench qualification and Friday reservation are known; thermal-zone simultaneous use remains unresolved.",
+    "version_state": "confirmed",
+    "assumptions": ["Bench operating day is 08:00–18:00 / 台架工作时间08:00–18:00", "Vehicle V17 availability table is authoritative for this fixture."],
+    "unknowns": ["Can B2 and HV-2 use the shared thermal zone simultaneously? / B2与HV-2能否同时使用共享温控区"],
+    "conflicts": ["Validation plan requests V-204 on B2 Friday while the requirement reserves B2 Friday morning for calibration."],
+    "rules": [
+      {"rule_kind": "hard", "statement": "800V validation requires HV-2 qualified bench / 800V验证必须使用HV-2资质台架", "review_status": "accepted", "evidence_status": "present", "source_span_key": "bench-hv", "permission": true},
+      {"rule_kind": "hard", "statement": "V17 cannot be scheduled Thursday / V17周四不可排程", "review_status": "accepted", "evidence_status": "present", "source_span_key": "plan-jobs", "permission": false},
+      {"rule_kind": "conditional", "statement": "Concurrent B2 + HV-2 thermal use depends on shared-zone approval / B2与HV-2并发取决于共享区批准", "review_status": "needs_clarification", "evidence_status": "unknown", "source_span_key": "layout-zone", "condition_kind": "if_then", "premise_status": "unknown", "premise_text": "shared thermal zone concurrency approved", "capacity": null, "permission": null}
+    ]
+  },
+  "scenario": {
+    "name": "Week 37 validation / 第37周验证",
+    "notes": "Formal-model metadata for the template; not a solved bench plan.",
+    "version_state": "confirmed",
+    "formal_model": {"name": "vehicle-validation-w37", "version_state": "confirmed", "variable_count": 26, "constraint_count": 41, "objective_text": "Minimize missed due dates and bench changes / 最小化延期与换台架", "notes": "Includes vehicle, bench, qualification, and reservation dimensions."},
+    "rules": [
+      {"rule_kind": "hard", "statement": "B2 Friday morning remains blocked for calibration / B2周五上午保留给标定", "review_status": "accepted", "evidence_status": "present", "source_span_key": "bench-hv"},
+      {"rule_kind": "objective", "statement": "Prefer keeping a vehicle on one bench when feasible / 可行时尽量同车不换台架", "review_status": "accepted", "evidence_status": "present", "source_span_key": "plan-jobs"}
+    ]
+  },
+  "solve_run": {
+    "run_state": "pending",
+    "message": "Template fixture only: deterministic solver not executed / 模板数据：确定性求解器尚未执行",
+    "candidate": {"label": "unexecuted-template", "objective_value": null, "is_selected": null, "notes": "No computed validation schedule exists yet."}
+  }
+}

@@ -1,0 +1,6 @@
+slot,channel,date,capacity,blackout
+HERO-MON,homepage,2026-10-05,1,false
+EMAIL-TUE,email,2026-10-06,2,false
+APP-WED,app,2026-10-07,2,false
+HERO-FRI,homepage,2026-10-09,1,true
+SOCIAL-FRI,social,2026-10-09,3,false
