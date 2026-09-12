@@ -144,11 +144,21 @@ export function WorkbenchPage() {
                     baselines={showing.baselines}
                     drafts={showing.drafts}
                     runs={showing.modelingRuns}
+                    scenarios={showing.scenarios}
                     currentBaselineId={showing.project.latest.baseline_id}
                     reload={reload}
                   />
                 ) : null}
-                {current === 'results' ? <ResultsWorkspace solveRuns={showing.solveRuns} /> : null}
+                {current === 'results' ? (
+                  <ResultsWorkspace
+                    projectId={projectId}
+                    solveRuns={showing.solveRuns}
+                    scenarios={showing.scenarios}
+                    latestRevisionId={showing.project.latest.scenario_revision_id}
+                    readiness={showing.readiness}
+                    reload={reload}
+                  />
+                ) : null}
               </main>
             </div>
           </>

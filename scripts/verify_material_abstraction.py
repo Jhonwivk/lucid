@@ -225,7 +225,7 @@ def main() -> None:
         expect("vision" not in caps, f"no Materials vision capability: {caps}")
         expect(caps.get("direct_text") == "implemented", "direct_text capability")
         expect(caps.get("understanding") in {"implemented", "implemented_awaiting_model_config"}, "T09 modeling agent present")
-        expect(caps.get("solver") == "not_yet_implemented", "solver still unimplemented")
+        expect(caps.get("solver") == "deterministic_training_schedule", "deterministic solver capability is advertised")
 
         status, missing = json_request(
             base,

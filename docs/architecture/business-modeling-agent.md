@@ -1,6 +1,6 @@
 # Business Modeling Agent — Stage 1 architecture
 
-LUCID Stage 1 is a **pre-solver** product: one Business Modeling Agent drafts source-grounded claims; a human reviews them; a confirmed baseline is exported. There is **no** solver, multi-agent swarm, or second content-understanding engine.
+LUCID Stage 1 is the evidence and review layer: one Business Modeling Agent drafts source-grounded claims; a human reviews them; a confirmed baseline is exported. Stage 2 consumes that baseline with deterministic formal solvers. There is no multi-agent swarm or second content-understanding engine.
 
 ## Pipeline
 
@@ -25,7 +25,7 @@ Human review (accept / edit / reject / not_applicable)
 Immutable baseline + JSON/Markdown handoff
         │
         ▼
-Stage 2 (not implemented): formal solver
+Stage 2: typed formal model, deterministic training/portfolio solver, what-if impact, comparison, history/export, and solver recovery. T20 live acceptance remains separate.
 ```
 
 ## One Agent

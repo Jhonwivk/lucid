@@ -282,7 +282,7 @@ def main() -> None:
         expect(status == 200 and isinstance(shell, dict), "shell")
         expect(shell["capabilities"]["import"].startswith("txt_md_pdf_csv_xlsx_png_jpeg"), "import capability includes T06 types")
         expect(shell["capabilities"]["ocr"] == "not_implemented", "ocr not claimed")
-        expect(shell["capabilities"]["solver"] == "not_yet_implemented", "solver still unimplemented")
+        expect(shell["capabilities"]["solver"] == "deterministic_training_schedule", "deterministic solver capability is advertised")
 
         status, project = json_request(
             base,

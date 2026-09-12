@@ -171,6 +171,8 @@ def export_baseline_json(baseline_id: str) -> JSONResponse:
 def material_content(project_id: str, material_id: str) -> FileResponse:
     try:
         material = store.get_material(project_id, material_id)
+        if material.get("deleted_at"):
+            raise store.NotFoundError("material content has been deleted")
         path = resolve_material_path(project_id, material)
     except store.NotFoundError as exc:
         raise _http_error(exc) from exc
@@ -203,6 +205,8 @@ def material_preview(
 ) -> dict:
     try:
         material = store.get_material(project_id, material_id)
+        if material.get("deleted_at"):
+            raise store.NotFoundError("material content has been deleted")
         _reject_checksum_mismatch(material, checksum)
         spans = [
             span

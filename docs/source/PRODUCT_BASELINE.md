@@ -1,7 +1,7 @@
 # Product baseline — LUCID
 
 Status: binding for MVP / first release planning  
-Last updated: 2026-09-12 (Stage 1 Business Modeling Agent; pre-solver)
+Last updated: 2026-09-12 (Stage 2 local implementation; T20 live acceptance pending)
 
 ## One-sentence definition
 
@@ -23,7 +23,7 @@ LUCID is a single-user workbench for turning business materials into a reviewed 
 
 ## Binding abstraction
 
-`User-provided evidence set → normalized Materials + SourceSpans → Business Modeling Agent draft → Human review → Confirmed baseline / pre-solver handoff → (Stage 2) Scenario/Formalization → Solve`
+`User-provided evidence set → normalized Materials + SourceSpans → Business Modeling Agent draft → Human review → Confirmed baseline → Scenario/Formalization → deterministic Solve → change/compare/export`
 
 - A **Material** is one unit of user-provided business evidence, regardless of origin or modality.
 - An **Evidence Set** is the collection of Materials currently supplied to an analysis.
@@ -61,7 +61,7 @@ A human-reviewable **modeling draft + confirmed baseline**, including:
 - assumptions / unknowns / conflicts
 - source provenance
 
-Users inspect and edit these. Unverified AI interpretation is never authoritative business truth. Confirmed baseline is a **pre-solver handoff**, not an executed solve.
+Users inspect and edit these. Unverified AI interpretation is never authoritative business truth. A confirmed baseline is the immutable input to a versioned formal model; only a validated typed model can execute a solver.
 
 ## Binding decisions
 
@@ -86,10 +86,10 @@ The durable product surfaces are:
 
 1. **Materials** — the current Evidence Set with provenance (question, entered text, and/or uploaded files)
 2. **Modeling** (compat: Understanding) — one Agent draft plus human review
-3. **Baseline** (compat: Scenarios) — immutable pre-solver handoff
-4. **Results** — solver not implemented; SolveRun metadata only if present
+3. **Baseline** (compat: Scenarios) — immutable confirmed input and versioned formalization
+4. **Results** — deterministic candidates, explanations, what-if impact, and exported history
 
-Stage 1 fills Materials, Modeling, and Baseline with real contracts. Results stays an honest “solver not implemented” surface.
+Stage 1 fills Materials, Modeling, and Baseline with real contracts. Stage 2 extends Baseline and Results with executable typed solver paths while keeping generic or incomplete models visibly unavailable.
 
 ## Safety / integrity notes
 

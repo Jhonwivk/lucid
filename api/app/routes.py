@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import PlainTextResponse
 
 from . import ingest, store, template_catalog
+from .db import get_data_dir
 from .schemas import (
     DirectTextCreate,
     MaterialCreate,
@@ -16,12 +21,23 @@ from .schemas import (
     ProjectSummary,
     ScenarioCreate,
     ScenarioFromBaselineCreate,
+    ScenarioImpactPreviewCreate,
     ScenarioInvalidationCreate,
     ScenarioOut,
     ScenarioRevisionCreate,
     ScenarioRevisionOut,
     SolveRunCreate,
+    SolveRunClaimCreate,
+    SolveRunHeartbeatCreate,
+    SolveRunCompleteCreate,
+    SolveRunResumeCreate,
     SolveRunOut,
+    ConflictExplanationIn,
+    ScenarioImpactOut,
+    ScenarioComparisonOut,
+    WhatIfScenarioCreate,
+    TrainingScheduleSolveCreate,
+    PortfolioSolveCreate,
     SourceSpanCreate,
     SourceSpanOut,
     UnderstandingCreate,
@@ -31,6 +47,20 @@ from .schemas import (
 )
 
 router = APIRouter()
+
+
+def resolve_material_path(project_id: str, material: dict) -> Path | None:
+    """Resolve an imported material path without allowing traversal outside data/."""
+    metadata = material.get("metadata") or {}
+    stored_path = metadata.get("stored_path")
+    if not isinstance(stored_path, str) or not stored_path.strip():
+        return None
+    data_root = get_data_dir().resolve()
+    project_root = (data_root / "materials" / project_id).resolve()
+    candidate = (data_root / stored_path).resolve()
+    if project_root not in candidate.parents:
+        return None
+    return candidate
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -142,6 +172,21 @@ def create_direct_text_material(
 def list_materials(project_id: str) -> list[MaterialOut]:
     try:
         return [MaterialOut.model_validate(item) for item in store.list_materials(project_id)]
+    except store.NotFoundError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.delete("/api/projects/{project_id}/materials/{material_id}", response_model=MaterialOut)
+def delete_material(project_id: str, material_id: str) -> MaterialOut:
+    try:
+        material = store.delete_material(project_id, material_id)
+        try:
+            path = resolve_material_path(project_id, material)
+            if path is not None:
+                path.unlink(missing_ok=True)
+        except (FileNotFoundError, OSError, PermissionError):
+            pass
+        return MaterialOut.model_validate(material)
     except store.NotFoundError as exc:
         raise _http_error(exc) from exc
 
@@ -259,6 +304,53 @@ def create_scenario_revision(
 
 
 @router.post(
+    "/api/scenarios/{scenario_id}/what-if",
+    response_model=ScenarioRevisionOut,
+)
+def create_what_if_scenario(
+    scenario_id: str, payload: WhatIfScenarioCreate
+) -> ScenarioRevisionOut:
+    try:
+        return ScenarioRevisionOut.model_validate(
+            store.create_what_if_scenario(scenario_id, payload)
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
+    "/api/scenarios/{scenario_id}/impact-preview",
+    response_model=ScenarioImpactOut,
+)
+def preview_scenario_impact(
+    scenario_id: str, payload: ScenarioImpactPreviewCreate
+) -> ScenarioImpactOut:
+    try:
+        return ScenarioImpactOut.model_validate(
+            store.preview_scenario_impact(scenario_id, payload)
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get(
+    "/api/scenarios/{scenario_id}/compare",
+    response_model=ScenarioComparisonOut,
+)
+def compare_scenario_revisions(
+    scenario_id: str, left_revision_id: str, right_revision_id: str
+) -> ScenarioComparisonOut:
+    try:
+        return ScenarioComparisonOut.model_validate(
+            store.compare_scenario_revisions(
+                scenario_id, left_revision_id, right_revision_id
+            )
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
     "/api/scenario-revisions/{revision_id}/invalidate",
     response_model=ScenarioRevisionOut,
 )
@@ -298,6 +390,36 @@ def create_solve_run(project_id: str, payload: SolveRunCreate) -> SolveRunOut:
         raise _http_error(exc) from exc
 
 
+@router.post(
+    "/api/projects/{project_id}/solve-training-schedule",
+    response_model=SolveRunOut,
+)
+def execute_training_schedule(
+    project_id: str, payload: TrainingScheduleSolveCreate
+) -> SolveRunOut:
+    try:
+        return SolveRunOut.model_validate(
+            store.execute_training_schedule(project_id, payload)
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post(
+    "/api/projects/{project_id}/solve-portfolio",
+    response_model=SolveRunOut,
+)
+def execute_portfolio(
+    project_id: str, payload: PortfolioSolveCreate
+) -> SolveRunOut:
+    try:
+        return SolveRunOut.model_validate(
+            store.execute_portfolio(project_id, payload)
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
 @router.get("/api/projects/{project_id}/solve-runs", response_model=list[SolveRunOut])
 def list_solve_runs(project_id: str) -> list[SolveRunOut]:
     try:
@@ -307,10 +429,149 @@ def list_solve_runs(project_id: str) -> list[SolveRunOut]:
 
 
 @router.get("/api/solve-runs/{run_id}", response_model=SolveRunOut)
-def get_solve_run(run_id: str) -> SolveRunOut:
+def get_solve_run(run_id: str, project_id: str | None = None) -> SolveRunOut:
     try:
-        return SolveRunOut.model_validate(store.get_solve_run(run_id))
+        return SolveRunOut.model_validate(store.get_solve_run(run_id, project_id=project_id))
     except store.NotFoundError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/api/solve-runs/{run_id}/claim", response_model=SolveRunOut)
+def claim_solve_run(
+    run_id: str, payload: SolveRunClaimCreate, project_id: str | None = None
+) -> SolveRunOut:
+    try:
+        return SolveRunOut.model_validate(
+            store.claim_solve_run(
+                run_id,
+                owner=payload.owner,
+                stale_after_seconds=payload.stale_after_seconds,
+                project_id=project_id,
+            )
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/api/solve-runs/{run_id}/heartbeat", response_model=SolveRunOut)
+def heartbeat_solve_run(
+    run_id: str, payload: SolveRunHeartbeatCreate, project_id: str | None = None
+) -> SolveRunOut:
+    try:
+        return SolveRunOut.model_validate(
+            store.heartbeat_solve_run(
+                run_id, owner=payload.owner, claim_token=payload.claim_token, project_id=project_id
+            )
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/api/solve-runs/{run_id}/complete", response_model=SolveRunOut)
+def complete_solve_run(
+    run_id: str, payload: SolveRunCompleteCreate, project_id: str | None = None
+) -> SolveRunOut:
+    try:
+        return SolveRunOut.model_validate(
+            store.complete_solve_run(
+                run_id,
+                owner=payload.owner,
+                claim_token=payload.claim_token,
+                run_state=payload.run_state,
+                message=payload.message,
+                solver_name=payload.solver_name,
+                candidates=payload.candidates,
+                project_id=project_id,
+            )
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.post("/api/projects/{project_id}/solve-runs/{run_id}/resume", response_model=SolveRunOut)
+def resume_solve_run(
+    project_id: str, run_id: str, payload: SolveRunResumeCreate
+) -> SolveRunOut:
+    try:
+        return SolveRunOut.model_validate(
+            store.resume_solve_run(
+                project_id,
+                run_id,
+                owner=payload.owner,
+                stale_after_seconds=payload.stale_after_seconds,
+            )
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/api/projects/{project_id}/solve-runs/{run_id}/export.json")
+def export_solve_run(project_id: str, run_id: str) -> dict:
+    try:
+        return store.export_solve_run(run_id, project_id=project_id)
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/api/projects/{project_id}/solve-runs/{run_id}/export.md")
+def export_solve_run_markdown(project_id: str, run_id: str) -> PlainTextResponse:
+    try:
+        document = store.export_solve_run(run_id, project_id=project_id)
+    except (store.NotFoundError, store.ConflictError) as exc:
+        raise _http_error(exc) from exc
+    solve = document["solve_run"]
+    lines = [
+        f"# LUCID solve run {solve['id'][:8]}",
+        "",
+        f"- Project: {document['project']['title']} ({document['project']['id']})",
+        f"- Scenario revision: {document['scenario_revision']['revision_no']}",
+        f"- State: {solve['run_state']}",
+        f"- Solver: {solve.get('solver_name') or 'unknown'}",
+        f"- Input fingerprint: {solve.get('input_fingerprint') or 'unknown'}",
+        "",
+        "## Candidates",
+        "",
+    ]
+    for candidate in solve.get("candidates", []):
+        lines.extend(
+            [
+                f"### {candidate.get('label') or candidate['id']}",
+                f"- Objective value: {candidate.get('objective_value')}",
+                "```json",
+                json.dumps(candidate.get("result") or candidate.get("details") or {}, ensure_ascii=False, indent=2),
+                "```",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## Provenance",
+            "",
+            f"- Materials: {len(document['provenance'].get('materials', []))}",
+            f"- Source spans: {len(document['provenance'].get('source_spans', []))}",
+            f"- Related events: {len(document.get('events', []))}",
+        ]
+    )
+    filename = f'lucid-solve-run-{run_id[:8]}.md'
+    return PlainTextResponse(
+        "\n".join(lines),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post(
+    "/api/solve-runs/{run_id}/explanation",
+    response_model=SolveRunOut,
+)
+def record_solver_explanation(
+    run_id: str, payload: ConflictExplanationIn, project_id: str | None = None
+) -> SolveRunOut:
+    try:
+        return SolveRunOut.model_validate(
+            store.record_solver_explanation(run_id, payload, project_id=project_id)
+        )
+    except (store.NotFoundError, store.ConflictError) as exc:
         raise _http_error(exc) from exc
 
 

@@ -13,6 +13,7 @@ import type {
   ProjectSummary,
   ReadinessPayload,
   Scenario,
+  ScenarioRevision,
   ShellPayload,
   SolveRun,
   SourceSpan,
@@ -202,8 +203,59 @@ export function listScenarios(projectId: string): Promise<Scenario[]> {
   return request<Scenario[]>(`/projects/${projectId}/scenarios`)
 }
 
+export function createScenarioFromBaseline(
+  projectId: string,
+  baselineId: string,
+  payload: { name: string; notes?: string; expected_baseline_id?: string },
+): Promise<Scenario> {
+  return request<Scenario>(`/projects/${projectId}/scenarios/from-baseline/${baselineId}`, {
+    method: 'POST', body: JSON.stringify(payload),
+  })
+}
+
+export function createScenarioRevision(scenarioId: string, payload: Record<string, unknown>): Promise<ScenarioRevision> {
+  return request<ScenarioRevision>(`/scenarios/${scenarioId}/revisions`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function createWhatIfScenario(
+  scenarioId: string,
+  payload: { name: string; notes?: string; expected_parent_revision_id: string; changes: Array<Record<string, unknown>> },
+): Promise<ScenarioRevision> {
+  return request<ScenarioRevision>(`/scenarios/${scenarioId}/what-if`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function previewScenarioImpact(
+  scenarioId: string,
+  payload: { base_revision_id: string; changes: Array<Record<string, unknown>> },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/scenarios/${scenarioId}/impact-preview`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function compareScenarioRevisions(scenarioId: string, leftRevisionId: string, rightRevisionId: string): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams({ left_revision_id: leftRevisionId, right_revision_id: rightRevisionId })
+  return request<Record<string, unknown>>(`/scenarios/${scenarioId}/compare?${params.toString()}`)
+}
+
 export function listSolveRuns(projectId: string): Promise<SolveRun[]> {
   return request<SolveRun[]>(`/projects/${projectId}/solve-runs`)
+}
+
+export function runTrainingScheduleSolve(
+  projectId: string,
+  payload: { scenario_revision_id: string; formal_model_id?: string; max_candidates?: number },
+): Promise<SolveRun> {
+  return request<SolveRun>(`/projects/${projectId}/solve-training-schedule`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function runPortfolioSolve(
+  projectId: string,
+  payload: { scenario_revision_id: string; formal_model_id?: string; max_candidates?: number },
+): Promise<SolveRun> {
+  return request<SolveRun>(`/projects/${projectId}/solve-portfolio`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function submitSolverExplanation(runId: string, payload: Record<string, unknown>): Promise<SolveRun> {
+  return request<SolveRun>(`/solve-runs/${runId}/explanation`, { method: 'POST', body: JSON.stringify(payload) })
 }
 
 export function seedDemoProject(): Promise<ProjectDetail> {

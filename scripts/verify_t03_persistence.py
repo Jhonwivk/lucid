@@ -150,8 +150,8 @@ def main() -> None:
         expect("scenarios" in ids, "scenarios workspace")
         expect("results" in ids, "results workspace")
         expect(
-            shell_body["capabilities"]["solver"] == "not_yet_implemented",
-            "solver not faked",
+            shell_body["capabilities"]["solver"] == "deterministic_training_schedule",
+            "deterministic solver capability is advertised",
         )
 
         status, project = request(

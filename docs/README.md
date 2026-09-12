@@ -14,9 +14,9 @@ Current Stage 1 documents first. Historical M0–M2 notes stay linked; they are 
 | [reports/stage1-handoff.md](reports/stage1-handoff.md) | Delivery summary |
 | [reports/stage1-review.md](reports/stage1-review.md) | Review findings and fixes |
 | [reports/stage1-acceptance.md](reports/stage1-acceptance.md) | What was verified vs what LIVE still blocks |
-| [specs/001-first-release/spec.md](../specs/001-first-release/spec.md) | Full first-release spec; Stage 1 vs T11–T20 is marked at the top |
+| [specs/001-first-release/spec.md](../specs/001-first-release/spec.md) | Full first-release spec; Stage 2 implementation status and T20 gate are marked at the top |
 | [specs/001-first-release/plan.md](../specs/001-first-release/plan.md) | Historical M0–M6 map; Stage 1 = T09/T10 locally |
-| [specs/001-first-release/tasks.md](../specs/001-first-release/tasks.md) | T01–T20 status. T11–T20 / solver are **not** done |
+| [specs/001-first-release/tasks.md](../specs/001-first-release/tasks.md) | T01–T20 status. T11–T19 are locally verified; T20 remains blocked on live acceptance runs |
 | [specs/001-first-release/acceptance.md](../specs/001-first-release/acceptance.md) | Milestone gates + Stage 1 local checkboxes |
 
 Older `/Users/hairen/project/.tasks/lucid-stage1-*.md` files are historical execution records. They are not a second current plan.

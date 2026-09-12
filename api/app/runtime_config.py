@@ -62,7 +62,7 @@ def snapshot() -> dict[str, Any]:
         },
         "live_agent_possible": bool(model_configured),
         "live_azure_possible": bool(azure_configured),
-        "solver": "not_implemented",
+        "solver": "deterministic_training_schedule",
         "setup": {
             "env_file": "lucid/.env (copy from .env.example)",
             "model_keys": [

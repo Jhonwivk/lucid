@@ -1,6 +1,6 @@
 # LUCID
 
-Single-user **business-modeling workbench** (Stage 1: reviewed baseline + pre-solver handoff).
+Single-user **business-modeling and deterministic decision workbench** (Stage 1 evidence/review plus Stage 2 formalization, solving, comparison, and export).
 
 LUCID turns a decision question and whatever materials you already have into a source-grounded modeling draft for human review, then a confirmed baseline. It does **not** present unverified AI interpretation as business truth, and it does **not** run a solver in Stage 1.
 
@@ -28,7 +28,7 @@ Out of scope for MVP:
 | Web UI | Vite + React + TypeScript |
 | API | FastAPI (Python) |
 | Persistence | SQLite (`data/lucid.db`) |
-| Solver path (later) | Python OR-Tools / similar via the API |
+| Solver path | Deterministic Python training-schedule backtracking + portfolio enumeration via the API |
 
 See [docs/adr/ADR-0001-stack-and-runtime.md](docs/adr/ADR-0001-stack-and-runtime.md).
 
@@ -59,9 +59,9 @@ Or from the repo root:
 - Workbench: **http://127.0.0.1:5173/analyses/:projectId/materials** (also `/modeling`, `/baseline`, `/results`; `/understanding` and `/scenarios` redirect)
 - API health: **http://127.0.0.1:8000/api/health**
 - Readiness (non-secret presence only): **http://127.0.0.1:8000/api/readiness**
-- Persistence: SQLite file `data/lucid.db` (schema 5 after Stage 1 active-run lock). Optional demo seed: `POST http://127.0.0.1:8000/api/dev/seed-demo`.
+- Persistence: SQLite file `data/lucid.db` (schema 9: formal models, solver candidates, recovery leases, and material deletion metadata). Optional demo seed: `POST http://127.0.0.1:8000/api/dev/seed-demo`.
 - Composer: `POST /api/analyses/start` with `{ "title", "question", "text"? }`. A non-blank question is enough.
-- Modeling: `POST /api/projects/{id}/modeling-runs`. Missing live model config fails honestly (`model_not_configured`); it does not emit a fake draft.
+- Modeling: `POST /api/projects/{id}/modeling-runs`. Missing live model config fails honestly (`model_not_configured`); it does not emit a fake draft. After a confirmed baseline, Stage 2 formalization and deterministic solve endpoints are available.
 - Templates (T05): `GET /api/templates` lists six bilingual fixtures. `POST /api/templates/{id}/instantiate`. UI language is `en` / `zh-CN`.
 - Import: peer Materials including `.json` / `.docx` / `.pptx` as raw files for Azure. Direct text: `POST /api/projects/{id}/materials/text`. Files: `POST /api/projects/{id}/materials/import`. Limit 12 MiB. No PDF OCR.
 
@@ -100,7 +100,7 @@ Local SQLite contract for AnalysisProject, material metadata, source spans, vers
 
 - Unknown costs / permissions / capacities stay SQL `NULL` (never coerced to `0` / `false`).
 - Edits create new revisions; historical snapshot rows are not rewritten.
-- SolveRun stores state labels only. The solver is still **not** implemented (`claimed_execution` is always false).
+- SolveRun stores executable candidates, explanations, provenance, input fingerprints, and recovery lease metadata. Stage 2 solver execution is deterministic and bounded to the typed training-schedule and portfolio slices.
 - Proof helper: `python scripts/verify_t03_persistence.py` (uses a temp DB).
 
 Useful endpoints:
@@ -160,4 +160,4 @@ M0–M2 (T01–T08) remain verified.
 
 **Stage 1 (T09/T10 mapping):** one Business Modeling Agent, one Azure Content Understanding tool, human review, confirmed baseline export, bilingual workbench. No solver. LIVE Agent/Azure runs require local `LUCID_MODEL_*` and Azure CU settings.
 
-T11–T20 are **not** implemented. Do not treat SolveRun metadata or an Agent draft as an executed schedule.
+T11–T19 are implemented and locally verified, including a real deterministic training-schedule and portfolio solver. T20 still requires two live Agent-backed acceptance runs; do not treat a draft or a metadata-only SolveRun as an executed schedule.

@@ -1,7 +1,7 @@
 import { EmptyState } from '../../components/EmptyState'
-import type { ModelingBaseline, ModelingDraftRecord, ModelingRun } from '../../api/types'
+import type { FormalModelDefinition, ModelingBaseline, ModelingDraftRecord, ModelingRun, Scenario } from '../../api/types'
 import { useI18n } from '../../i18n'
-import { freezeBaseline, errorMessage } from '../../api/client'
+import { createScenarioFromBaseline, freezeBaseline, errorMessage } from '../../api/client'
 import { formatTimestamp } from '../../lib/format'
 import { canFreezeSelectedDraft, selectBaselineDraft, selectLatestModelingRun } from '../../lib/sourceView'
 import { useMemo, useState } from 'react'
@@ -14,6 +14,7 @@ type BaselineWorkspaceProps = {
   drafts: ModelingDraftRecord[]
   runs: ModelingRun[]
   currentBaselineId?: string | null
+  scenarios: Scenario[]
   reload: () => Promise<void> | void
 }
 
@@ -31,6 +32,7 @@ export function BaselineWorkspace({
   drafts,
   runs,
   currentBaselineId,
+  scenarios,
   reload,
 }: BaselineWorkspaceProps) {
   const { locale, t } = useI18n()
@@ -39,6 +41,9 @@ export function BaselineWorkspace({
   const [exporting, setExporting] = useState<'md' | 'json' | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
   const [exportFailedKind, setExportFailedKind] = useState<'md' | 'json' | null>(null)
+  const [scenarioName, setScenarioName] = useState('Scenario v1')
+  const [scenarioBusy, setScenarioBusy] = useState(false)
+  const [scenarioError, setScenarioError] = useState<string | null>(null)
   const ordered = useMemo(() => sortBaselines(baselines), [baselines])
   const currentId = currentBaselineId || ordered[0]?.id || null
   const [selectedId, setSelectedId] = useState<string | null>(currentId)
@@ -48,6 +53,7 @@ export function BaselineWorkspace({
     if (currentBaselineId) setSelectedId(currentBaselineId)
   }
   const selected = ordered.find((item) => item.id === selectedId) ?? ordered[0]
+  const boundScenario = selected?.scenario_id ? scenarios.find((scenario) => scenario.id === selected.scenario_id) : undefined
   const latestRun = useMemo(() => selectLatestModelingRun(runs, null), [runs])
   const latestDraft = useMemo(() => selectBaselineDraft(drafts, runs), [drafts, runs])
   const canFreeze = canFreezeSelectedDraft(latestDraft, latestRun?.id)
@@ -92,6 +98,24 @@ export function BaselineWorkspace({
       setExportError(errorMessage(err))
     } finally {
       setExporting(null)
+    }
+  }
+
+  async function onCreateScenario() {
+    if (!selected || selected.scenario_id || scenarioBusy || !scenarioName.trim()) return
+    setScenarioBusy(true)
+    setScenarioError(null)
+    try {
+      await createScenarioFromBaseline(projectId, selected.id, {
+        name: scenarioName.trim(),
+        expected_baseline_id: selected.id,
+        notes: 'Created from the confirmed baseline for formalization and solving.',
+      })
+      await reload()
+    } catch (err) {
+      setScenarioError(errorMessage(err))
+    } finally {
+      setScenarioBusy(false)
     }
   }
 
@@ -158,6 +182,27 @@ export function BaselineWorkspace({
           <p>{t('claimCount')} {selected.claim_count ?? t('none')}</p>
           <p>{t('baselineImmutable')}: {String(selected.immutable ?? true)}</p>
           <p>{t('solver')}: {selected.solver}</p>
+          <section className="stage2-formalization" aria-labelledby="stage2-formalization-heading">
+            <div className="fact-label" id="stage2-formalization-heading">{t('formalizationFlow')}</div>
+            {selected.scenario_id ? (
+              <p className="muted">{t('baselineBoundToScenario')} {selected.scenario_id}</p>
+            ) : (
+              <>
+                <p className="muted">{t('baselineToScenarioHint')}</p>
+                <div className="inline-form">
+                  <label className="field">
+                    <span>{t('scenarioName')}</span>
+                    <input value={scenarioName} onChange={(event) => setScenarioName(event.target.value)} maxLength={120} />
+                  </label>
+                  <button className="btn btn-primary" type="button" disabled={scenarioBusy || !scenarioName.trim()} onClick={() => void onCreateScenario()}>
+                    {scenarioBusy ? t('creatingScenario') : t('createScenarioFormalModel')}
+                  </button>
+                </div>
+              </>
+            )}
+            {scenarioError ? <p className="muted" role="alert">{scenarioError}</p> : null}
+            {boundScenario ? <ScenarioFormalSummary scenario={boundScenario} /> : null}
+          </section>
           <div className="review-actions">
             <button
               className="btn btn-secondary"
@@ -204,5 +249,45 @@ export function BaselineWorkspace({
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
     </div>
+  )
+}
+
+function ScenarioFormalSummary({ scenario }: { scenario: Scenario }) {
+  const { t } = useI18n()
+  const latest = scenario.revisions[scenario.revisions.length - 1]
+  const model = latest?.formal_model
+  const definition = model?.definition
+  return (
+    <div className="stage2-flow" data-testid="stage2-formal-model">
+      <div className="flow-step complete"><strong>{t('confirmedBaseline')}</strong><span>{scenario.name}</span></div>
+      <div className="flow-arrow" aria-hidden="true">↓</div>
+      <div className="flow-step complete"><strong>{t('scenarioRevision')}</strong><span>v{latest?.revision_no ?? '—'} · {latest?.version_state ?? '—'}</span></div>
+      <div className="flow-arrow" aria-hidden="true">↓</div>
+      <div className={`flow-step ${model?.validation?.valid ? 'complete' : 'warning'}`}>
+        <strong>{t('formalModel')}</strong>
+        <span>{model?.name ?? t('noFormalModel')}</span>
+        {model ? <FormalDefinitionSummary definition={definition} model={model} /> : null}
+      </div>
+    </div>
+  )
+}
+
+function FormalDefinitionSummary({ definition, model }: { definition?: FormalModelDefinition | null; model: NonNullable<Scenario['revisions'][number]['formal_model']> }) {
+  const { t } = useI18n()
+  const validation = model.validation ?? {}
+  const issues = Array.isArray(validation.issues) ? validation.issues : []
+  return (
+    <>
+      <div className="meta-row">
+        <span>{t('variables')}: {definition?.variables.length ?? model.variable_count ?? '—'}</span>
+        <span>{t('constraints')}: {definition?.constraints.length ?? model.constraint_count ?? '—'}</span>
+        <span>{t('objectives')}: {definition?.objectives.length ?? '—'}</span>
+      </div>
+      <p className={`validation-badge ${validation.valid ? 'valid' : 'invalid'}`}>
+        {validation.valid ? t('formalModelReady') : t('formalModelNeedsReview')}
+      </p>
+      {issues.length ? <ul className="issue-list">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul> : null}
+      {definition?.training_schedule ? <p className="muted">{t('trainingScheduleInputs')}: {definition.training_schedule.sessions.length} {t('sessions')}, {definition.training_schedule.time_slots.length} {t('timeSlots')}, {definition.training_schedule.rooms.length} {t('rooms')}, {definition.training_schedule.instructors.length} {t('instructors')}</p> : null}
+    </>
   )
 }

@@ -2,9 +2,9 @@
 
 Status: this file is the **full first-release** product spec (T01–T20). It is not a claim that every item is already shipped.
 
-**Stage 1 (current, 2026-09-12):** T01–T10 locally — evidence → one Business Modeling Agent → human review → freeze/export of a pre-solver baseline. LIVE model/Azure remains configuration-blocked.
+**Stage 1 (2026-09-12):** T01–T10 locally — evidence → one Business Modeling Agent → human review → freeze/export of a pre-solver baseline. **Stage 2:** T11–T19 are implemented and locally verified; T20 remains blocked on two live Agent-backed acceptance runs. LIVE model/Azure remains configuration-blocked in this checkout.
 
-**Not Stage 1:** T11–T20, including formalization, the deterministic solver, comparison, and two live end-to-end runs. Those stay in this spec as later first-release work. Historical execution notes under `/Users/hairen/project/.tasks/` are not a second current plan.
+T20 remains the final acceptance gate: two complete live evidence runs. Historical execution notes under `/Users/hairen/project/.tasks/` are not a second current plan.
 
 ## Goal
 
