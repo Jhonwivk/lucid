@@ -30,7 +30,8 @@ for key in (
     "AZURE_CONTENT_UNDERSTANDING_API_KEY",
     "AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID",
 ):
-    os.environ.pop(key, None)
+    # Keep the names present so optional dotenv cannot refill live keys.
+    os.environ[key] = ""
 
 
 def expect(condition: bool, message: str) -> None:
@@ -38,7 +39,20 @@ def expect(condition: bool, message: str) -> None:
         raise SystemExit(f"FAIL: {message}")
 
 
-def _draft(**overrides):
+def _coverage(run):
+    return [
+        {
+            "material_id": item["id"],
+            "filename": item.get("filename") or "source",
+            "state": "analyzed",
+            "detail": "test coverage",
+            "needs_azure": False,
+        }
+        for item in (run.get("snapshot") or {}).get("materials") or []
+    ]
+
+
+def _draft(run=None, **overrides):
     from app.modeling.draft import ModelingDraft
 
     body = {
@@ -83,9 +97,11 @@ def _draft(**overrides):
         ],
         "conflicts": [],
         "readiness_issues": ["Partial by design"],
-        "coverage": [],
+        "coverage": _coverage(run) if run else [],
     }
     body.update(overrides)
+    if "coverage" not in overrides and run is not None:
+        body["coverage"] = _coverage(run)
     return ModelingDraft.model_validate(body)
 
 
@@ -310,6 +326,7 @@ def main() -> None:
         question_material_id=src["material"]["id"],
     )
     bad = _draft(
+        atomic_run,
         constraints=[
             {
                 "claim_key": "c-1",
@@ -336,6 +353,7 @@ def main() -> None:
     after = store.list_understandings(atomic["id"])
     expect(len(after) == len(before), "failed draft must not leave an understanding")
     dup = _draft(
+        atomic_run,
         constraints=[
             {
                 "claim_key": "c-1",
@@ -358,7 +376,7 @@ def main() -> None:
         expect("duplicate" in str(exc), str(exc))
     persistence.update_run(atomic_run["id"], status="cancelled")
     try:
-        persistence.save_draft(atomic_run["id"], _draft())
+        persistence.save_draft(atomic_run["id"], _draft(atomic_run))
         raise SystemExit("FAIL: cancelled run must not publish")
     except persistence.StaleRunError:
         pass
@@ -371,6 +389,7 @@ def main() -> None:
         question_material_id=src["material"]["id"],
     )
     accepted_looking = _draft(
+        live_run,
         constraints=[
             {
                 "claim_key": "c-1",
@@ -381,6 +400,7 @@ def main() -> None:
                     {
                         "material_id": src["material"]["id"],
                         "source_span_id": src["spans"][0]["id"],
+                        "material_checksum": src["material"]["checksum"],
                         "precision": "approximate",
                         "coordinate_system": "original_text",
                     }
@@ -434,6 +454,7 @@ def main() -> None:
     block_draft = persistence.save_draft(
         block_run["id"],
         _draft(
+            block_run,
             constraints=[
                 {
                     "claim_key": "c-1",
@@ -443,6 +464,7 @@ def main() -> None:
                         {
                             "material_id": block_src["material"]["id"],
                             "source_span_id": block_src["spans"][0]["id"],
+                            "material_checksum": block_src["material"]["checksum"],
                             "precision": "approximate",
                             "coordinate_system": "original_text",
                         }
@@ -464,7 +486,12 @@ def main() -> None:
     p1 = next(item for item in block_draft["claims"] if item["claim_key"] == "p-1")
     persistence.review_claim(p1["id"], action="not_applicable")
     frozen2 = persistence.freeze_baseline(block_project["id"], block_draft["id"])
-    expect(frozen2["handoff"]["unknowns"], "unknowns remain visible")
+    unresolved_unknowns = (frozen2["handoff"].get("unresolved") or {}).get("unknowns") or []
+    expect(unresolved_unknowns, "unreviewed unknowns remain visible as unresolved")
+    expect(
+        "u-1" not in {item.get("claim_key") for item in (frozen2["handoff"].get("unknowns") or [])},
+        "unreviewed unknowns are not active after freeze",
+    )
     expect(frozen2["solver"] == "not_executed", "handoff is pre-solver")
 
     # 7. Idempotent resume / overlapping workers.

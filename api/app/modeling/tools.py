@@ -16,7 +16,7 @@ from .. import ingest, store
 from ..db import get_data_dir
 from ..runtime_config import azure_settings
 from . import persistence
-from .azure_cu import AzureContentUnderstanding, AzureUnavailableError
+from .azure_cu import AzureContentUnderstanding, AzureUnavailableError, public_locator_map
 from .context import require_run
 from .draft import ModelingDraft
 from .provenance import (
@@ -27,13 +27,24 @@ from .provenance import (
     select_span,
 )
 from .snapshot import (
+    SnapshotIntegrityError,
     append_clarification_material,
     get_snapshot_material,
     list_snapshot_materials,
     list_snapshot_spans,
+    read_snapshot_bytes,
 )
 
 _azure = AzureContentUnderstanding()
+
+
+def _charge_tool() -> str | None:
+    ctx = require_run()
+    try:
+        persistence.increment_tool_count(ctx.run_id)
+    except persistence.StaleRunError as exc:
+        return json.dumps({"error": "stale_run", "detail": str(exc)})
+    return None
 
 
 def set_azure_client(client: AzureContentUnderstanding) -> None:
@@ -42,6 +53,7 @@ def set_azure_client(client: AzureContentUnderstanding) -> None:
 
 
 def resolve_material_path(project_id: str, material: dict[str, Any]):
+    """Live Materials store path. Modeling tools must use snapshot bytes instead."""
     meta = material.get("metadata") or {}
     stored = meta.get("stored_path")
     if not isinstance(stored, str) or not stored.strip():
@@ -54,6 +66,13 @@ def resolve_material_path(project_id: str, material: dict[str, Any]):
         raise store.NotFoundError("stored material file is missing")
     return path
 
+
+def _snapshot_bytes_or_stale(run: dict[str, Any], material: dict[str, Any]) -> bytes:
+    try:
+        return read_snapshot_bytes(run, material)
+    except SnapshotIntegrityError as exc:
+        persistence.mark_stale_input(run["id"], reason=str(exc))
+        raise
 
 def _require_snapshot_material(run: dict[str, Any], material_id: str) -> dict[str, Any]:
     if material_id.startswith("/") or "://" in material_id:
@@ -68,7 +87,9 @@ def _require_snapshot_material(run: dict[str, Any], material_id: str) -> dict[st
 def inspect_evidence() -> str:
     """List snapshot Materials and processing/coverage state for this run. Use project-scoped IDs only."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     run = persistence.get_run(ctx.run_id)
     coverage = {item.get("material_id"): item for item in run.get("coverage") or []}
     rows = []
@@ -126,7 +147,9 @@ def read_source(
 ) -> str:
     """Read original or stored excerpts by snapshot material/span IDs. Never pass filesystem paths or URLs."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     run = persistence.get_run(ctx.run_id)
     try:
         material = _require_snapshot_material(run, material_id)
@@ -162,8 +185,10 @@ def read_source(
 
     if is_text and not derived:
         try:
-            path = resolve_material_path(ctx.project_id, material)
-            text = path.read_bytes().decode("utf-8", errors="replace")
+            text = _snapshot_bytes_or_stale(run, material).decode("utf-8", errors="replace")
+        except SnapshotIntegrityError as exc:
+            persistence.append_event(ctx.run_id, kind="tool_result", title="Read source stale_input", detail=str(exc))
+            return json.dumps({"error": "stale_input", "detail": str(exc)})
         except Exception as exc:  # noqa: BLE001
             persistence.append_event(ctx.run_id, kind="tool_result", title="Read source failed", detail=type(exc).__name__)
             return json.dumps({"error": "stored bytes could not be read", "detail": type(exc).__name__})
@@ -260,6 +285,14 @@ def read_source(
                 "original_coordinates": "unknown",
             },
             "derived_labeled": bool(derived_preview),
+            "analyzer_id": None if not analysis or str(analysis.get("status") or "") != "succeeded" else analysis.get("analyzer_id"),
+            "operation_id": None if not analysis or str(analysis.get("status") or "") != "succeeded" else analysis.get("operation_id"),
+            "material_checksum": material.get("checksum"),
+            "provider_locators": (
+                []
+                if not analysis or str(analysis.get("status") or "") != "succeeded"
+                else public_locator_map(analysis.get("derived"))
+            ),
             "note": (
                 "Reading one excerpt does not mean the whole material was analyzed. "
                 "Derived Azure markdown is not original file coordinates."
@@ -273,7 +306,9 @@ def read_source(
 def understand_material(material_id: str) -> str:
     """Invoke or resume the single Azure Content Understanding service on one snapshot Material."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     run = persistence.get_run(ctx.run_id)
     try:
         material = _require_snapshot_material(run, material_id)
@@ -313,6 +348,8 @@ def understand_material(material_id: str) -> str:
                 "truncated": bounded["truncated"],
                 "next_offset": bounded["next_offset"],
                 "total_chars": bounded["total_chars"],
+                "material_checksum": material.get("checksum"),
+                "provider_locators": public_locator_map(cached.get("derived")),
             },
             ensure_ascii=False,
         )
@@ -337,14 +374,22 @@ def understand_material(material_id: str) -> str:
             }
         )
     try:
-        path = resolve_material_path(ctx.project_id, material)
-        content = path.read_bytes()
+        content = _snapshot_bytes_or_stale(run, material)
         continuation = cached.get("continuation_token") if cached else None
         job = _azure.start_job(
             content,
             media_type=material.get("media_type"),
             continuation_token=continuation if cached and cached.get("status") in {"running", "timeout"} else None,
         )
+    except SnapshotIntegrityError as exc:
+        persistence.update_coverage(
+            ctx.run_id,
+            material_id,
+            state="unavailable",
+            detail=f"stale_input: {exc}",
+            needs_azure=True,
+        )
+        return json.dumps({"status": "unavailable", "error_code": "stale_input", "message": str(exc)})
     except AzureUnavailableError as exc:
         persistence.update_coverage(
             ctx.run_id,
@@ -435,6 +480,8 @@ def understand_material(material_id: str) -> str:
             "truncated": None if bounded is None else bounded["truncated"],
             "next_offset": None if bounded is None else bounded["next_offset"],
             "total_chars": None if bounded is None else bounded["total_chars"],
+            "material_checksum": material.get("checksum"),
+            "provider_locators": public.get("provider_locators") or [],
             "error_code": public.get("error_code"),
             "error_message": public.get("error_message"),
         },
@@ -446,7 +493,9 @@ def understand_material(material_id: str) -> str:
 def ask_clarification(question: str, reason: str, affected_claim_keys: list[str] | None = None) -> str:
     """Pause for one human clarification. The answer becomes new equal-status text evidence."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     keys = affected_claim_keys or []
     clarification = persistence.ensure_clarification(
         ctx.run_id,
@@ -509,6 +558,8 @@ def ask_clarification(question: str, reason: str, affected_claim_keys: list[str]
             material,
             imported.get("spans") or [],
             clarification_id=clarification.get("id") or "",
+            run_id=ctx.run_id,
+            project_id=ctx.project_id,
         )
         persistence.replace_snapshot(ctx.run_id, snapshot)
         persistence.update_coverage(
@@ -547,9 +598,19 @@ def ask_clarification(question: str, reason: str, affected_claim_keys: list[str]
 def submit_modeling_draft(draft: dict) -> str:
     """Submit a source-grounded modeling draft. Cannot confirm a baseline or run a solver."""
     ctx = require_run()
-    persistence.increment_tool_count(ctx.run_id)
+    blocked = _charge_tool()
+    if blocked:
+        return blocked
     parsed = ModelingDraft.model_validate(draft)
     run = persistence.get_run(ctx.run_id)
+    if run.get("stale_input"):
+        return json.dumps(
+            {
+                "ok": False,
+                "error": "stale_input",
+                "message": "Frozen snapshot bytes are missing or no longer match. The draft was not saved.",
+            }
+        )
     coverage = run.get("coverage") or []
     incomplete = [
         item
@@ -564,7 +625,10 @@ def submit_modeling_draft(draft: dict) -> str:
             "Draft marked complete while one or more sources are still incomplete."
         )
         parsed = ModelingDraft.model_validate(payload)
-    saved = persistence.save_draft(ctx.run_id, parsed)
+    try:
+        saved = persistence.save_draft(ctx.run_id, parsed)
+    except (ValueError, persistence.StaleRunError) as exc:
+        return json.dumps({"ok": False, "error": type(exc).__name__, "message": str(exc)})
     persistence.append_event(
         ctx.run_id,
         kind="tool_result",
@@ -581,6 +645,102 @@ def submit_modeling_draft(draft: dict) -> str:
             "baseline_confirmed": False,
         }
     )
+
+
+def build_preview_payload(
+    *,
+    material: dict[str, Any],
+    spans: list[dict[str, Any]],
+    raw: bytes,
+    content_url: str,
+    start: int = 0,
+    end: int = 4000,
+    page: int | None = None,
+    sheet: str | None = None,
+    cell_ref: str | None = None,
+    snapshot_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from .provenance import bound_text, select_matching_spans
+
+    media = material.get("media_type") or ""
+    derived = False
+    lo = max(0, start)
+    matched_spans = spans
+    locator_hits = select_matching_spans(spans, page=page, sheet=sheet, cell_ref=cell_ref)
+    if locator_hits:
+        matched_spans = locator_hits
+    elif page is not None or sheet or cell_ref:
+        matched_spans = spans
+    excerpt = ""
+    coordinate_system = "unresolved"
+    locator: dict[str, Any]
+    if media.startswith("text/") or media in {"application/json", "text/csv", "text/markdown"}:
+        text = raw.decode("utf-8", errors="replace")
+        bounded = bound_text(text, start_offset=lo, end_offset=end, max_chars=4000)
+        excerpt = bounded["excerpt"]
+        coordinate_system = "original_text"
+        locator = {
+            "precision": "exact" if start or (end and end < bounded["total_chars"]) else (
+                "whole_source" if bounded.get("whole_source") else "approximate"
+            ),
+            "start_offset": bounded["start_offset"],
+            "end_offset": bounded["end_offset"],
+            "total_chars": bounded["total_chars"],
+            "next_offset": bounded["next_offset"],
+            "truncated": bounded["truncated"],
+            "window_start": bounded["start_offset"],
+            "coordinate_system": coordinate_system,
+        }
+    elif media == "application/pdf":
+        chosen = matched_spans[0] if matched_spans else (spans[0] if spans else None)
+        excerpt = str((chosen or {}).get("excerpt") or "")
+        shown_page = page if page is not None else (chosen or {}).get("page")
+        coordinate_system = "pdf_page" if shown_page is not None else "source_span_excerpt"
+        locator = {
+            "precision": "exact" if shown_page is not None else "whole_source",
+            "page": shown_page,
+            "coordinate_system": coordinate_system,
+            "in_page_highlight": False,
+            "truncated": False,
+        }
+        if shown_page is not None:
+            content_url = f"{content_url}#page={shown_page}"
+    elif media.startswith("image/"):
+        chosen = matched_spans[0] if matched_spans else (spans[0] if spans else None)
+        region = (chosen or {}).get("region")
+        excerpt = str((chosen or {}).get("excerpt") or "")
+        coordinate_system = "image_region" if region else "full_image"
+        locator = {
+            "precision": "exact" if region else "whole_source",
+            "region": region,
+            "region_state": "full_image" if not region else "region",
+            "coordinate_system": coordinate_system,
+        }
+    else:
+        chosen = matched_spans[0] if matched_spans else (spans[0] if spans else None)
+        excerpt = str((chosen or {}).get("excerpt") or "")
+        coordinate_system = (chosen or {}).get("locator_kind") or "source_span_excerpt"
+        locator = {
+            "precision": "approximate" if excerpt else "whole_source",
+            "page": (chosen or {}).get("page"),
+            "sheet": (chosen or {}).get("sheet"),
+            "cell_ref": (chosen or {}).get("cell_ref"),
+            "source_span_id": (chosen or {}).get("id"),
+            "region": (chosen or {}).get("region"),
+            "coordinate_system": coordinate_system,
+        }
+    return {
+        "material": material,
+        "spans": matched_spans or spans,
+        "coordinate_system": coordinate_system,
+        "excerpt": excerpt,
+        "derived": derived,
+        "byte_size": len(raw),
+        "locator": locator,
+        "content_url": content_url,
+        "snapshot": snapshot_meta,
+        "frozen": bool(snapshot_meta and snapshot_meta.get("frozen")),
+    }
 
 
 TOOLS = [

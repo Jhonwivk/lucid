@@ -273,7 +273,7 @@ def main() -> None:
         expect(caps.get("png_jpeg") == "implemented", "png_jpeg capability")
         expect(caps.get("ocr") == "not_implemented", "ocr not claimed")
         expect(caps.get("understanding") in {"implemented", "implemented_awaiting_model_config"}, "understanding agent present")
-        expect(caps.get("solver") == "not_yet_implemented", "solver still unimplemented")
+        expect(caps.get("solver") == "deterministic_training_schedule", "deterministic solver capability is advertised")
 
         status, project = json_request(
             base,

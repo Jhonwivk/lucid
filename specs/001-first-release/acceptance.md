@@ -1,57 +1,22 @@
-# Acceptance — First release (001)
+# First-release acceptance
 
-## Global acceptance rules
+## Local acceptance
 
-- Single-user only behavior throughout.
-- Imported or entered content never elevates to system/tool authorization.
-- Unknowns remain blocked until explicitly resolved.
-- Scenario changes create new versions; confirmed baselines are not overwritten in place.
-- Solver results expose explicit state labels (`feasible` / `optimal` / `infeasible` / `unknown` / `model_invalid` as applicable).
-- No simulated success for unimplemented adapters.
-- No required input modality. Direct text, files, and mixtures are all valid Evidence Sets.
-- Source adapters must not perform semantic business understanding.
+- [x] App starts and the four-workspace shell loads.
+- [x] Materials preserve bytes, checksums and source spans for direct text, documents, tables and images.
+- [x] One Agent draft can be reviewed and frozen as a baseline when providers are configured; missing providers fail honestly.
+- [x] Confirmed baseline binds to a versioned formal scenario.
+- [x] Training and portfolio solvers produce real bounded candidates and explicit states.
+- [x] What-if, comparison, provenance, history/export and material deletion work.
+- [x] Solver leases reject stale workers and support deterministic resume.
 
-## Milestone gates
+## T20 live acceptance — blocked
 
-| Gate | Required evidence |
-| --- | --- |
-| M0 | App builds/starts; landing + workbench shell loads; docs/tasks present |
-| M1 | Persistence contract + My Analyses / four workspaces backed by real records |
-| M2 | Fixtures plus peer Materials (direct text / TXT-MD-PDF / CSV-XLSX / PNG-JPEG) persist with source spans / cell / full-image region provenance. No vision provider/API key gate |
-| M3 | Understanding review/correction + formal scenario model versioning |
-| M4 | Deterministic schedule + portfolio solve + comparison UI |
-| M5 | Change preview, export, recovery, boundary protections |
-| M6 | Two full E2E acceptance runs with artifacts |
+Two cases must use real user evidence and run through:
 
-## M0 acceptance (this bootstrap)
+```text
+intake → live Agent extraction → human review → typed model
+→ deterministic solve → what-if → export
+```
 
-- [x] `/Users/hairen/project/lucid` exists as dedicated project
-- [x] API health endpoint responds
-- [x] Web landing loads at local Vite URL
-- [x] Workbench routes for Materials / Modeling / Baseline / Results (`/understanding` and `/scenarios` redirect)
-- [x] Product baseline + ADR + specs + AGENTS.md present
-- [ ] T11–T20 capabilities (explicitly **not** claimed; T09/T10 are Stage 1 below)
-
-## T06–T08 intake (M2)
-
-- [x] Direct user-entered text is a first-class Material (`POST /api/projects/{id}/materials/text`)
-- [x] TXT / Markdown / text-PDF multipart import into an existing project
-- [x] Stored bytes + SHA-256 + SourceSpan provenance
-- [x] CSV / XLSX cell provenance through real FastAPI + temp SQLite/data (T07)
-- [x] PNG / JPEG bytes + image metadata + exactly one honest full-image region span; semantic understanding is not performed; no Grok/xAI/macOS Vision call is required or made (T08)
-- [x] An analysis may contain only direct text, only files, or an arbitrary mixture; no modality is required
-- M2 is **complete** after T06 + T07 + T08 all pass. No vision provider/API key is an M2 gate.
-
-## T20 acceptance (future)
-
-1. Scheduling vertical slice with real evidence artifacts
-2. Portfolio combination workflow with real evidence artifacts
-
-## Stage 1 (T09/T10 mapping, 2026-09-12)
-
-- [x] One Business Modeling Agent over a frozen Material snapshot; question-only evidence allowed
-- [x] Claim review + freeze/export of an effective pre-solver baseline
-- [x] Local contract tests and browser walkthrough
-- [ ] LIVE model + Azure Content Understanding (configuration-blocked; not T20)
-
-T11–T20 remain not started. Solver results are not Stage 1 acceptance.
+A fixture, a handcrafted baseline or a metadata-only SolveRun does not count. The current checkout has no confirmed live model/Azure acceptance evidence.

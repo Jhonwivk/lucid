@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 
 from . import store
 from .modeling import persistence, runner
-from .modeling.tools import resolve_material_path
+from .modeling.snapshot import SnapshotIntegrityError, get_snapshot_material, list_snapshot_spans, read_snapshot_bytes, snapshot_public_meta
+from .modeling.tools import build_preview_payload, resolve_material_path
 from .runtime_config import snapshot
 from .schemas import (
     BaselineFreezeIn,
@@ -41,6 +42,8 @@ def start_modeling_run(project_id: str, payload: ModelingRunCreate) -> dict:
     try:
         return runner.start_run(project_id, payload.question)
     except store.NotFoundError as exc:
+        raise _http_error(exc) from exc
+    except store.ConflictError as exc:
         raise _http_error(exc) from exc
     except ValueError as exc:
         raise _http_error(exc) from exc
@@ -168,6 +171,8 @@ def export_baseline_json(baseline_id: str) -> JSONResponse:
 def material_content(project_id: str, material_id: str) -> FileResponse:
     try:
         material = store.get_material(project_id, material_id)
+        if material.get("deleted_at"):
+            raise store.NotFoundError("material content has been deleted")
         path = resolve_material_path(project_id, material)
     except store.NotFoundError as exc:
         raise _http_error(exc) from exc
@@ -182,6 +187,11 @@ def material_content(project_id: str, material_id: str) -> FileResponse:
     )
 
 
+def _reject_checksum_mismatch(material: dict, checksum: str | None) -> None:
+    if checksum and material.get("checksum") and checksum != material.get("checksum"):
+        raise HTTPException(status_code=409, detail="material checksum does not match")
+
+
 @router.get("/api/projects/{project_id}/materials/{material_id}/preview")
 def material_preview(
     project_id: str,
@@ -191,9 +201,13 @@ def material_preview(
     page: int | None = None,
     sheet: str | None = None,
     cell_ref: str | None = None,
+    checksum: str | None = None,
 ) -> dict:
     try:
         material = store.get_material(project_id, material_id)
+        if material.get("deleted_at"):
+            raise store.NotFoundError("material content has been deleted")
+        _reject_checksum_mismatch(material, checksum)
         spans = [
             span
             for span in store.list_source_spans(project_id)
@@ -205,85 +219,82 @@ def material_preview(
         raise _http_error(exc) from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail="material path is not readable") from exc
-    media = material.get("media_type") or ""
-    derived = False
-    lo = max(0, start)
-    content_url = f"/api/projects/{project_id}/materials/{material_id}/content"
-    matched_spans = spans
-    if page is not None:
-        page_hits = [span for span in matched_spans if span.get("page") == page]
-        matched_spans = page_hits if page_hits else matched_spans
-    if sheet:
-        needle = sheet.casefold()
-        sheet_hits = [
-            span
-            for span in matched_spans
-            if isinstance(span.get("sheet"), str) and str(span.get("sheet")).casefold() == needle
-        ]
-        if sheet_hits:
-            matched_spans = sheet_hits
-    if cell_ref:
-        cell_needle = cell_ref.casefold()
-        cell_hits = [
-            span
-            for span in matched_spans
-            if isinstance(span.get("cell_ref"), str)
-            and str(span.get("cell_ref")).casefold() == cell_needle
-        ]
-        if cell_hits:
-            matched_spans = cell_hits
-    if media.startswith("text/") or media in {"application/json", "text/csv", "text/markdown"}:
-        text = raw.decode("utf-8", errors="replace")
-        from .modeling.provenance import bound_text
+    return build_preview_payload(
+        material=material,
+        spans=spans,
+        raw=raw,
+        content_url=f"/api/projects/{project_id}/materials/{material_id}/content",
+        start=start,
+        end=end,
+        page=page,
+        sheet=sheet,
+        cell_ref=cell_ref,
+        snapshot_meta={"frozen": False, "role": "live", "material_id": material_id, "checksum": material.get("checksum")},
+    )
 
-        bounded = bound_text(text, start_offset=lo, end_offset=end, max_chars=4000)
-        excerpt = bounded["excerpt"]
-        coordinate_system = "original_text"
-        locator = {
-            "precision": "exact" if start or (end and end < bounded["total_chars"]) else (
-                "whole_source" if bounded.get("whole_source") else "approximate"
-            ),
-            "start_offset": bounded["start_offset"],
-            "end_offset": bounded["end_offset"],
-            "total_chars": bounded["total_chars"],
-            "next_offset": bounded["next_offset"],
-            "truncated": bounded["truncated"],
-            "window_start": bounded["start_offset"],
-        }
-    elif media == "application/pdf":
-        chosen = matched_spans[0] if matched_spans else (spans[0] if spans else None)
-        excerpt = str((chosen or {}).get("excerpt") or "")
-        coordinate_system = "pdf_page" if page is not None or (chosen or {}).get("page") else "source_span_excerpt"
-        shown_page = page if page is not None else (chosen or {}).get("page")
-        locator = {
-            "precision": "exact" if shown_page is not None else "whole_source",
-            "page": shown_page,
-            "coordinate_system": coordinate_system,
-        }
-        if shown_page is not None:
-            content_url = f"{content_url}#page={shown_page}"
-    else:
-        chosen = matched_spans[0] if matched_spans else (spans[0] if spans else None)
-        excerpt = str((chosen or {}).get("excerpt") or "")
-        coordinate_system = (chosen or {}).get("locator_kind") or "source_span_excerpt"
-        locator = {
-            "precision": "approximate" if excerpt else "whole_source",
-            "page": (chosen or {}).get("page"),
-            "sheet": (chosen or {}).get("sheet"),
-            "cell_ref": (chosen or {}).get("cell_ref"),
-            "source_span_id": (chosen or {}).get("id"),
-        }
-    return {
-        "material": material,
-        "spans": matched_spans or spans,
-        "coordinate_system": coordinate_system,
-        "excerpt": excerpt,
-        "derived": derived,
-        "byte_size": len(raw),
-        "locator": locator,
-        "content_url": content_url,
-    }
 
+@router.get("/api/modeling-runs/{run_id}/materials/{material_id}/content")
+def snapshot_material_content(run_id: str, material_id: str) -> FileResponse:
+    try:
+        run = persistence.get_run(run_id)
+        material = get_snapshot_material(run, material_id)
+        if material is None:
+            raise store.NotFoundError("material not found in this run snapshot")
+        if not material.get("snapshot_path") or material.get("copy_error"):
+            raise store.NotFoundError("material snapshot identity is missing")
+        raw = read_snapshot_bytes(run, material)
+    except store.NotFoundError as exc:
+        raise _http_error(exc) from exc
+    except SnapshotIntegrityError as exc:
+        persistence.mark_stale_input(run_id, reason=str(exc))
+        raise HTTPException(status_code=409, detail=f"stale_input: {exc}") from exc
+    media = material.get("media_type") or "application/octet-stream"
+    filename = material.get("filename") or "snapshot"
+    return Response(
+        content=raw,
+        media_type=media,
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.get("/api/modeling-runs/{run_id}/materials/{material_id}/preview")
+def snapshot_material_preview(
+    run_id: str,
+    material_id: str,
+    start: int = 0,
+    end: int = 4000,
+    page: int | None = None,
+    sheet: str | None = None,
+    cell_ref: str | None = None,
+    checksum: str | None = None,
+) -> dict:
+    try:
+        run = persistence.get_run(run_id)
+        material = get_snapshot_material(run, material_id)
+        if material is None:
+            raise store.NotFoundError("material not found in this run snapshot")
+        if not material.get("snapshot_path") or material.get("copy_error"):
+            raise store.NotFoundError("material snapshot identity is missing")
+        _reject_checksum_mismatch(material, checksum)
+        spans = list_snapshot_spans(run, material_id)
+        raw = read_snapshot_bytes(run, material)
+    except store.NotFoundError as exc:
+        raise _http_error(exc) from exc
+    except SnapshotIntegrityError as exc:
+        persistence.mark_stale_input(run_id, reason=str(exc))
+        raise HTTPException(status_code=409, detail=f"stale_input: {exc}") from exc
+    return build_preview_payload(
+        material=material,
+        spans=spans,
+        raw=raw,
+        content_url=f"/api/modeling-runs/{run_id}/materials/{material_id}/content",
+        start=start,
+        end=end,
+        page=page,
+        sheet=sheet,
+        cell_ref=cell_ref,
+        snapshot_meta=snapshot_public_meta(material),
+    )
 
 @router.post("/api/analyses/start")
 def composer_start(payload: ComposerStartIn) -> dict:

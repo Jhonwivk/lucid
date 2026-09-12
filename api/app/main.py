@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from .db import ensure_database
 from .importers import INTAKE_CAPABILITY
 from .modeling.checkpointer import get_checkpointer
+from .modeling.runner import recover_on_startup
 from .modeling_routes import router as modeling_router
 from .routes import router as persistence_router
 from .runtime_config import snapshot
@@ -43,22 +44,22 @@ WORKSPACES = (
         "id": "baseline",
         "label": "Baseline",
         "title": "Baseline",
-        "summary": "Confirmed immutable pre-solver handoff. Scenarios remain available as a compatibility name.",
+        "summary": "Confirmed baseline becomes a versioned formal model and can run the deterministic training solver.",
         "status": "ready",
     },
     {
         "id": "scenarios",
         "label": "Scenarios",
         "title": "Scenarios",
-        "summary": "Compatibility route for Baseline / versioned formalization metadata. Solver is not implemented.",
+        "summary": "Compatibility route for Baseline / versioned formalization metadata and solver input.",
         "status": "compat",
     },
     {
         "id": "results",
         "label": "Results",
         "title": "Results",
-        "summary": "Pre-solver boundary. Deterministic solving is Stage 2.",
-        "status": "pre_solver",
+        "summary": "Run a validated training-schedule model and inspect candidates, conflicts, and what-if impact.",
+        "status": "stage2_solver",
     },
 )
 
@@ -90,6 +91,7 @@ class ShellResponse(BaseModel):
 async def lifespan(_app: FastAPI):
     ensure_database()
     get_checkpointer()
+    recover_on_startup()
     try:
         yield
     finally:
@@ -137,7 +139,7 @@ def shell() -> ShellResponse:
     )
     return ShellResponse(
         product="LUCID",
-        tagline="Business modeling workbench — pre-solver",
+        tagline="Business modeling workbench — formalize, solve, compare",
         mode="single-user",
         workspaces=[WorkspaceMeta(**item) for item in WORKSPACES],
         capabilities={
@@ -152,8 +154,8 @@ def shell() -> ShellResponse:
             "azure_content_understanding": (
                 "configured" if ready["live_azure_possible"] else "not_configured"
             ),
-            "solver": "not_yet_implemented",
-            "export": "baseline_handoff",
+            "solver": "deterministic_training_schedule",
+            "export": "baseline_handoff_and_solve_result",
             "llm_assist": understanding,
         },
     )

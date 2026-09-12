@@ -71,6 +71,8 @@ class AdaptiveScriptModel(BaseChatModel):
                 },
                 "clarify",
             )
+        if self.clarify_once and names.count("inspect_evidence") < 2:
+            return _call("inspect_evidence", {}, "inspect-after-clarify")
         if self._submitted:
             return ChatResult(generations=[ChatGeneration(message=AIMessage(content="Draft already submitted."))])
         self._submitted = True
@@ -203,8 +205,9 @@ def _refs(materials: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "material_id": item["id"],
                 "source_span_id": span_id,
-                "precision": "approximate",
-                "coordinate_system": "source_span_excerpt",
+                "material_checksum": item.get("checksum"),
+                "precision": "approximate" if span_id else "whole_source",
+                "coordinate_system": "source_span_excerpt" if span_id else "whole_source",
                 "quote": None,
             }
         )

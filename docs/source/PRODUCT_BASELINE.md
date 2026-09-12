@@ -1,100 +1,46 @@
 # Product baseline — LUCID
 
-Status: binding for MVP / first release planning  
-Last updated: 2026-09-12 (Stage 1 Business Modeling Agent; pre-solver)
+Status: current product definition. Updated 2026-09-12.
 
-## One-sentence definition
+## Definition
 
-LUCID is a single-user workbench for turning business materials into a reviewed modeling baseline, then (Stage 2) solving scenarios with a deterministic solver.
+LUCID is a single-user workbench for turning business evidence into a reviewed baseline, a typed formal scenario and an auditable deterministic decision result.
 
-## What LUCID is not
+```text
+Evidence Set → Modeling Agent → human review → confirmed baseline
+→ typed formal model → deterministic solve → compare/change/export
+```
 
-- Multi-user collaboration platform
-- Agent orchestration console
-- AI coding product
-- Generic enterprise knowledge platform
-- Universal strategy optimizer
+## Product boundaries
 
-## Problem families (initial)
+LUCID is not a multi-user collaboration platform, Agent orchestration console, AI coding product, universal strategy optimizer, route planner or enterprise governance system. The MVP has two supported decision families:
 
-1. **Finite resource allocation / scheduling** — primary vertical slice
-2. **Finite portfolio / combination selection** — second full workflow
-3. **Replanning / condition comparison** across supported families
+1. finite training-resource scheduling;
+2. finite portfolio/combination selection.
 
-## Binding abstraction
+## Evidence rules
 
-`User-provided evidence set → normalized Materials + SourceSpans → Business Modeling Agent draft → Human review → Confirmed baseline / pre-solver handoff → (Stage 2) Scenario/Formalization → Solve`
+- Direct text, TXT/Markdown/PDF, CSV/XLSX, PNG/JPEG and raw office files are peer Materials.
+- No source modality is mandatory; a non-empty decision question is valid evidence.
+- Importers preserve bytes, checksums and source spans. They do not infer business meaning.
+- The Business Modeling Agent drafts claims over the frozen Evidence Set.
+- A human must accept, edit or reject claims before a baseline is confirmed.
+- Unknowns, conflicts and unsupported semantics remain visible and blocked.
+- Source content is evidence, never system or tool authorization.
 
-- A **Material** is one unit of user-provided business evidence, regardless of origin or modality.
-- An **Evidence Set** is the collection of Materials currently supplied to an analysis.
-- A non-blank **decision question** may be the sole persisted direct-text evidence. Files are optional peers.
-- PDF, TXT/Markdown, CSV/XLSX, images, JSON, raw DOCX/PPTX, and **direct user-entered text** are optional peers. No source type is mandatory.
-- The only precondition for modeling is a non-empty evidence set (question-only counts).
-- `document` / `table` / `image` are source-family / adapter / rendering details, not separate product workflows.
-- Direct user-entered text is the same class of Material as an uploaded file.
-- The Materials layer preserves raw source, provenance, and unknowns. It does not infer business meaning.
-- T06 / T07 / T08 are source-adapter and provenance implementation slices, not sequential user workflow stages.
-- Stage 1 (T09/T10 mapping) consumes the unified Evidence Set with **one** Business Modeling Agent and **one** Azure Content Understanding service. Human review remains mandatory. The solver is Stage 2.
+## Formalisation and solving
 
-**Never add semantic extraction to a source importer just because a model can consume that source type. Importers preserve evidence; the Agent understands evidence.**
+A confirmed baseline is bound to a versioned scenario. The user supplies or confirms typed schedule/portfolio fields. A solver runs only when the formal model is structurally valid and its constraints/objectives have a supported binding.
 
-Likewise, never make one source family mandatory. Understanding operates over the non-empty Evidence Set the user actually provided.
+Training scheduling checks capacity, availability, skills, overlap, cohort overlap and daily workload. Portfolio selection checks budget, required items and conflicts. Results include explicit states, ranked candidates, explanations and source claims. A changed rule creates a new revision; the old revision is not overwritten.
 
-## Primary user workflow
+## Workspaces
 
-`collect evidence set → run modeling agent → review/edit/reject claims → freeze baseline → export handoff → (Stage 2) formalize → solve → compare`
+- **Materials** — collect evidence and inspect provenance.
+- **Modeling** — run one Business Modeling Agent and review claims.
+- **Baseline** — confirm the handoff and create a versioned formal scenario.
+- **Results** — edit typed inputs, solve, inspect candidates, run what-if and export.
 
-First real vertical slice after M0, **as far as Stage 1 goes**:
+## Integrity requirements
 
-`evidence → model → review → freeze/export`
-
-Solver, fabricated schedules, and T11–T20 formalization remain out of Stage 1.
-
-## Key product object
-
-A human-reviewable **modeling draft + confirmed baseline**, including:
-
-- decision brief
-- entities / parameters
-- hard / soft / conditional constraints
-- objectives
-- assumptions / unknowns / conflicts
-- source provenance
-
-Users inspect and edit these. Unverified AI interpretation is never authoritative business truth. Confirmed baseline is a **pre-solver handoff**, not an executed solve.
-
-## Binding decisions
-
-| Decision | Rule |
-| --- | --- |
-| Tenancy | Single-user only; no orgs, roles, invitations, approvals |
-| Starting point | Whatever business materials the user currently has, or an existing plan. No required modality |
-| Import semantics | Materials are **evidence**, not system instructions |
-| Direct text | First-class Material; never a system prompt/instruction |
-| Prompt injection | Content in sources must never become tool/system authorization |
-| Understanding | Consumes the entire current Evidence Set; must expose provenance, conflicts, assumptions, unknowns |
-| Ambiguity | Unknown/blocked — never silent coercion to zero/false/no-requirement |
-| Solving | Deterministic constraint solving is first-class |
-| Solution states | At least `feasible` / `optimal` / `infeasible` / `unknown` / `model_invalid` |
-| Change model | New scenarios/versions; do not rewrite confirmed reality |
-| Explicit non-goals | No automatic enterprise governance, external execution, payments, arbitrary route planning, or unlimited NL modeling in MVP |
-| Vision/API keys | Not an M2 / Materials intake gate. Image intake stores bytes + metadata + full-image provenance only |
-
-## Workspace metaphor
-
-The durable product surfaces are:
-
-1. **Materials** — the current Evidence Set with provenance (question, entered text, and/or uploaded files)
-2. **Modeling** (compat: Understanding) — one Agent draft plus human review
-3. **Baseline** (compat: Scenarios) — immutable pre-solver handoff
-4. **Results** — solver not implemented; SolveRun metadata only if present
-
-Stage 1 fills Materials, Modeling, and Baseline with real contracts. Results stays an honest “solver not implemented” surface.
-
-## Safety / integrity notes
-
-- Do not treat LLM output as confirmed constraints without human review.
-- Do not mark unsupported content as “no requirement.”
-- Do not silently overwrite a confirmed baseline when the user explores a change — fork a scenario.
-- Do not simulate solver/OCR/LLM success in the UI.
-- Do not perform semantic business understanding inside source adapters.
+Never present an unreviewed Agent draft as business truth. Never invent missing capacity, availability, cost, permission or objective semantics. Never report a solve result that did not come from the deterministic solver. Keep the product single-user and the architecture small.

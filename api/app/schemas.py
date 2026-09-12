@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -39,13 +39,193 @@ class RuleIn(StrictModel):
     permission: bool | None = None
 
 
+class FormalVariableIn(StrictModel):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    domain: str | None = None
+    unit: str | None = None
+    source_claim_key: str | None = None
+
+
+class FormalParameterIn(StrictModel):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    value: str | float | int | bool | None = None
+    unit: str | None = None
+    source_claim_key: str | None = None
+
+
+class FormalConstraintIn(StrictModel):
+    key: str = Field(min_length=1)
+    expression: str = Field(min_length=1)
+    strength: Literal["hard", "soft", "conditional"] = "hard"
+    enabled: bool = True
+    source_claim_key: str | None = None
+    binding: Literal[
+        "room_capacity",
+        "room_availability",
+        "instructor_availability",
+        "instructor_skill",
+        "no_overlap",
+        "cohort_no_overlap",
+        "daily_instructor_load",
+        "portfolio_budget",
+        "portfolio_required",
+        "portfolio_conflict",
+    ] | None = None
+
+
+class FormalObjectiveIn(StrictModel):
+    key: str = Field(min_length=1)
+    expression: str = Field(min_length=1)
+    direction: Literal["minimize", "maximize", "unknown"] = "unknown"
+    priority: int | None = Field(default=None, ge=1)
+    weight: float | None = Field(default=None, gt=0)
+    source_claim_key: str | None = None
+    binding: Literal["preferred_day", "evening_sessions", "portfolio_value"] | None = None
+
+
+class TrainingSessionIn(StrictModel):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    duration_minutes: int = Field(gt=0)
+    attendees: int = Field(default=0, ge=0)
+    cohort: str | None = None
+    required_skill: str | None = None
+    preferred_day: str | None = None
+    allowed_slot_keys: list[str] = Field(default_factory=list)
+
+
+class TrainingTimeSlotIn(StrictModel):
+    key: str = Field(min_length=1)
+    day: str = Field(min_length=1)
+    start_minute: int = Field(ge=0, le=24 * 60)
+    end_minute: int = Field(gt=0, le=24 * 60)
+
+
+class TrainingRoomIn(StrictModel):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    capacity: int = Field(ge=0)
+    available_slot_keys: list[str] = Field(default_factory=list)
+
+
+class TrainingInstructorIn(StrictModel):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    skills: list[str] = Field(default_factory=list)
+    available_slot_keys: list[str] = Field(default_factory=list)
+    max_daily_sessions: int = Field(default=2, ge=1)
+
+
+class TrainingScheduleDefinitionIn(StrictModel):
+    sessions: list[TrainingSessionIn] = Field(default_factory=list)
+    time_slots: list[TrainingTimeSlotIn] = Field(default_factory=list)
+    rooms: list[TrainingRoomIn] = Field(default_factory=list)
+    instructors: list[TrainingInstructorIn] = Field(default_factory=list)
+    allow_evening: bool = False
+
+
+class PortfolioItemIn(StrictModel):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    cost: float = Field(ge=0)
+    value: float
+    required: bool = False
+    conflict_keys: list[str] = Field(default_factory=list)
+    source_claim_key: str | None = None
+
+
+class PortfolioDefinitionIn(StrictModel):
+    budget: float = Field(ge=0)
+    items: list[PortfolioItemIn] = Field(min_length=1)
+
+
+class FormalModelDefinitionIn(StrictModel):
+    schema_version: int = Field(default=1, ge=1)
+    family: str = Field(default="generic", min_length=1)
+    variables: list[FormalVariableIn] = Field(default_factory=list)
+    parameters: list[FormalParameterIn] = Field(default_factory=list)
+    constraints: list[FormalConstraintIn] = Field(default_factory=list)
+    objectives: list[FormalObjectiveIn] = Field(default_factory=list)
+    # Claim-level evidence is kept beside the executable elements so solver
+    # results can resolve a source_claim_key without reopening the source set.
+    source_claims: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    # A typed executable payload is optional for generic formalization, but
+    # required by the training-schedule solver when family is training_schedule.
+    training_schedule: TrainingScheduleDefinitionIn | None = None
+    portfolio: PortfolioDefinitionIn | None = None
+
+
+class FormalElementChange(StrictModel):
+    """A reviewable, deterministic edit to one formal-definition element."""
+
+    collection: Literal["variables", "parameters", "constraints", "objectives", "training_schedule", "portfolio"]
+    key: str = Field(min_length=1)
+    operation: Literal["upsert", "remove"] = "upsert"
+    value: dict[str, Any] | None = None
+
+
+class WhatIfScenarioCreate(StrictModel):
+    name: str = Field(min_length=1)
+    notes: str | None = None
+    expected_parent_revision_id: str
+    changes: list[FormalElementChange] = Field(min_length=1)
+
+
+class ScenarioImpactPreviewCreate(StrictModel):
+    base_revision_id: str
+    changes: list[FormalElementChange] = Field(min_length=1)
+
+
+class ScenarioImpactOut(StrictModel):
+    scenario_id: str
+    base_revision_id: str
+    base_revision_no: int
+    changed_elements: list[dict[str, Any]] = Field(default_factory=list)
+    affected_claim_keys: list[str] = Field(default_factory=list)
+    invalidation_required: bool
+    solver_ready_after_change: bool
+    validation: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScenarioComparisonOut(StrictModel):
+    scenario_id: str
+    left_revision_id: str
+    right_revision_id: str
+    left_revision_no: int
+    right_revision_no: int
+    changed_elements: list[dict[str, Any]] = Field(default_factory=list)
+    changed_rules: list[dict[str, Any]] = Field(default_factory=list)
+    solve_runs: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ConflictExplanationIn(StrictModel):
+    """Evidence returned by an actual solver or solver adapter.
+
+    The API deliberately requires the producer to identify itself; this endpoint
+    records solver output and does not invent an infeasibility diagnosis.
+    """
+
+    provenance: Literal["solver"]
+    solver_name: str = Field(min_length=1)
+    status: Literal["feasible", "optimal", "infeasible", "unknown", "model_invalid"]
+    summary: str = Field(min_length=1)
+    conflicts: list[dict[str, Any]] = Field(default_factory=list)
+    relaxations: list[dict[str, Any]] = Field(default_factory=list)
+    training_schedule: TrainingScheduleDefinitionIn | None = None
+
+
 class FormalModelIn(StrictModel):
     name: str = "untitled-model"
     version_state: VersionState = "draft"
-    variable_count: int | None = None
-    constraint_count: int | None = None
+    variable_count: int | None = Field(default=None, ge=0)
+    constraint_count: int | None = Field(default=None, ge=0)
     objective_text: str | None = None
     notes: str | None = None
+    definition: FormalModelDefinitionIn | None = None
+    understanding_revision_id: str | None = None
+    dependency_fingerprint: str | None = None
 
 
 class ResultCandidateIn(StrictModel):
@@ -53,6 +233,10 @@ class ResultCandidateIn(StrictModel):
     objective_value: float | None = None
     is_selected: bool | None = None
     notes: str | None = None
+    details: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    explanation: dict[str, Any] | None = None
+    provenance: dict[str, Any] | None = None
 
 
 class ProjectCreate(StrictModel):
@@ -114,12 +298,24 @@ class ScenarioCreate(StrictModel):
     rules: list[RuleIn] = Field(default_factory=list)
 
 
+class ScenarioFromBaselineCreate(StrictModel):
+    name: str = Field(min_length=1)
+    notes: str | None = None
+    expected_baseline_id: str | None = None
+
+
 class ScenarioRevisionCreate(StrictModel):
     notes: str | None = None
     version_state: VersionState = "draft"
     based_on_understanding_id: str | None = None
     formal_model: FormalModelIn | None = None
     rules: list[RuleIn] = Field(default_factory=list)
+    expected_parent_revision_id: str | None = None
+
+
+class ScenarioInvalidationCreate(StrictModel):
+    reason: str = Field(min_length=1)
+    expected_version_state: VersionState = "draft"
 
 
 class SolveRunCreate(StrictModel):
@@ -128,6 +324,43 @@ class SolveRunCreate(StrictModel):
     run_state: SolveRunState = "pending"
     message: str | None = None
     candidate: ResultCandidateIn | None = None
+
+
+class SolveRunClaimCreate(StrictModel):
+    owner: str = Field(min_length=1)
+    stale_after_seconds: int = Field(default=120, ge=1, le=86400)
+
+
+class SolveRunHeartbeatCreate(StrictModel):
+    owner: str = Field(min_length=1)
+    claim_token: str = Field(min_length=1)
+
+
+class SolveRunCompleteCreate(StrictModel):
+    owner: str = Field(min_length=1)
+    claim_token: str = Field(min_length=1)
+    run_state: SolveRunState
+    message: str | None = None
+    solver_name: str | None = None
+    candidates: list[ResultCandidateIn] = Field(default_factory=list)
+
+
+class SolveRunResumeCreate(StrictModel):
+    owner: str = Field(min_length=1)
+    stale_after_seconds: int = Field(default=120, ge=1, le=86400)
+
+
+class TrainingScheduleSolveCreate(StrictModel):
+    scenario_revision_id: str
+    formal_model_id: str | None = None
+    max_candidates: int = Field(default=3, ge=1, le=20)
+    max_search_nodes: int = Field(default=100_000, ge=1_000, le=1_000_000)
+
+
+class PortfolioSolveCreate(StrictModel):
+    scenario_revision_id: str
+    formal_model_id: str | None = None
+    max_candidates: int = Field(default=5, ge=1, le=50)
 
 
 class RuleOut(StrictModel):
@@ -160,6 +393,7 @@ class MaterialOut(StrictModel):
     checksum: str | None
     notes: str | None
     metadata: dict[str, Any] | None = None
+    deleted_at: str | None = None
     created_at: str
 
 
@@ -193,6 +427,10 @@ class FormalModelOut(StrictModel):
     constraint_count: int | None
     objective_text: str | None
     notes: str | None
+    definition: FormalModelDefinitionIn | None = None
+    definition_hash: str | None = None
+    dependency_fingerprint: str | None = None
+    validation: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
 
@@ -228,6 +466,8 @@ class ScenarioRevisionOut(StrictModel):
     based_on_understanding_id: str | None
     formal_model_id: str | None
     notes: str | None
+    invalidation_reason: str | None = None
+    invalidated_at: str | None = None
     formal_model: FormalModelOut | None = None
     rules: list[RuleOut] = Field(default_factory=list)
     created_at: str
@@ -265,6 +505,10 @@ class ResultCandidateOut(StrictModel):
     objective_value: float | None
     is_selected: bool | None
     notes: str | None
+    details: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    explanation: dict[str, Any] | None = None
+    provenance: dict[str, Any] | None = None
     created_at: str
 
 
@@ -280,6 +524,14 @@ class SolveRunOut(StrictModel):
     started_at: str | None
     finished_at: str | None
     message: str | None
+    explanation: dict[str, Any] | None = None
+    input_fingerprint: str | None = None
+    claim_owner: str | None = None
+    claim_token: str | None = None
+    heartbeat_at: str | None = None
+    stale_at: str | None = None
+    resume_count: int = 0
+    lease_timeout_seconds: int = 120
     candidates: list[ResultCandidateOut] = Field(default_factory=list)
     created_at: str
 

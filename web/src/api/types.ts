@@ -239,8 +239,41 @@ export type FormalModel = {
   constraint_count: number | null
   objective_text: string | null
   notes: string | null
+  definition?: FormalModelDefinition | null
+  definition_hash?: string | null
+  dependency_fingerprint?: string | null
+  validation?: { valid?: boolean; issues?: string[]; [key: string]: unknown }
   created_at: string
 }
+
+export type FormalModelDefinition = {
+  schema_version: number
+  family: string
+  variables: FormalVariable[]
+  parameters: FormalParameter[]
+  constraints: FormalConstraint[]
+  objectives: FormalObjective[]
+  source_claims?: Record<string, Array<Record<string, unknown>>>
+  training_schedule?: TrainingScheduleDefinition | null
+  portfolio?: PortfolioDefinition | null
+}
+export type FormalVariable = { key: string; name: string; domain?: string | null; unit?: string | null; source_claim_key?: string | null }
+export type FormalParameter = { key: string; name: string; value?: string | number | boolean | null; unit?: string | null; source_claim_key?: string | null }
+export type FormalConstraint = { key: string; expression: string; strength: 'hard' | 'soft' | 'conditional'; enabled: boolean; source_claim_key?: string | null }
+export type FormalObjective = { key: string; expression: string; direction: 'minimize' | 'maximize' | 'unknown'; priority?: number | null; weight?: number | null; source_claim_key?: string | null }
+export type TrainingScheduleDefinition = {
+  sessions: TrainingSession[]
+  time_slots: TrainingTimeSlot[]
+  rooms: TrainingRoom[]
+  instructors: TrainingInstructor[]
+  allow_evening?: boolean
+}
+export type TrainingSession = { key: string; name: string; duration_minutes: number; attendees: number; cohort?: string | null; required_skill?: string | null; preferred_day?: string | null; allowed_slot_keys: string[] }
+export type TrainingTimeSlot = { key: string; day: string; start_minute: number; end_minute: number }
+export type TrainingRoom = { key: string; name: string; capacity: number; available_slot_keys: string[] }
+export type TrainingInstructor = { key: string; name: string; skills: string[]; available_slot_keys: string[]; max_daily_sessions: number }
+export type PortfolioItem = { key: string; name: string; cost: number; value: number; required: boolean; conflict_keys: string[]; source_claim_key?: string | null }
+export type PortfolioDefinition = { budget: number; items: PortfolioItem[] }
 
 export type ScenarioRevision = {
   id: string
@@ -252,6 +285,8 @@ export type ScenarioRevision = {
   based_on_understanding_id: string | null
   formal_model_id: string | null
   notes: string | null
+  invalidation_reason?: string | null
+  invalidated_at?: string | null
   formal_model: FormalModel | null
   rules: Rule[]
   created_at: string
@@ -273,6 +308,10 @@ export type ResultCandidate = {
   objective_value: number | null
   is_selected: boolean | null
   notes: string | null
+  details?: Record<string, unknown> | null
+  result?: Record<string, unknown> | null
+  explanation?: Record<string, unknown> | null
+  provenance?: Record<string, unknown> | null
   created_at: string
 }
 
@@ -288,8 +327,19 @@ export type SolveRun = {
   started_at: string | null
   finished_at: string | null
   message: string | null
+  explanation?: SolverExplanation | null
   candidates: ResultCandidate[]
   created_at: string
+}
+
+export type SolverExplanation = {
+  provenance: 'solver'
+  solver_name: string
+  status: 'feasible' | 'optimal' | 'infeasible' | 'unknown' | 'model_invalid'
+  summary: string
+  conflicts?: Array<Record<string, unknown>>
+  relaxations?: Array<Record<string, unknown>>
+  training_schedule?: TrainingScheduleDefinition | null
 }
 
 export type WorkbenchData = {
@@ -313,6 +363,18 @@ export type MaterialPreview = {
   byte_size: number
   locator?: Record<string, unknown>
   content_url?: string
+  snapshot?: {
+    material_id?: string
+    filename?: string | null
+    checksum?: string | null
+    original_checksum?: string | null
+    byte_size?: number | null
+    snapshot_path?: string | null
+    role?: string
+    frozen?: boolean
+    copy_error?: string | null
+  } | null
+  frozen?: boolean
 }
 
 export type ReadinessPayload = {
@@ -382,6 +444,26 @@ export type ModelingRun = {
   drafts: { id: string; revision_no: number; completeness: string; created_at: string }[]
   created_at: string
   updated_at: string
+  heartbeat_at?: string | null
+  stale_input?: boolean
+  snapshot?: {
+    materials?: Array<{
+      id: string
+      filename?: string | null
+      kind?: MaterialKind | string | null
+      media_type?: string | null
+      byte_size?: number | null
+      checksum?: string | null
+      notes?: string | null
+      created_at?: string
+      snapshot_path?: string | null
+      original_checksum?: string | null
+      role?: string | null
+      copy_error?: string | null
+      spans?: SourceSpan[]
+      metadata?: Record<string, unknown> | null
+    }>
+  } | null
 }
 
 export type ModelingClaim = {
@@ -407,6 +489,7 @@ export type EvidenceRef = {
   end_offset?: number | null
   sheet?: string | null
   cell_ref?: string | null
+  region?: Record<string, unknown> | null
   quote?: string | null
 }
 
@@ -430,6 +513,12 @@ export type ModelingBaseline = {
   markdown: string
   created_at: string
   solver: string
+  immutable?: boolean
+  draft_revision_no?: number | null
+  claim_count?: number
+  source_count?: number
+  scenario_id?: string | null
+  scenario_revision_id?: string | null
 }
 
 export type ClaimReviewEvent = {

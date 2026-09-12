@@ -1,5 +1,7 @@
 # T05 — bilingual chrome and built-in templates
 
+Status: reference design note. Current release scope and verification live in [docs/status.md](../status.md) and [specs/001-first-release/tasks.md](../../specs/001-first-release/tasks.md).
+
 Internal note after reading `lucid/.cursor/skills/frontend-design/SKILL.md` and preserving the T04 Collation Desk direction.
 
 ## What this slice adds

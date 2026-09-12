@@ -13,6 +13,7 @@ import type {
   ProjectSummary,
   ReadinessPayload,
   Scenario,
+  ScenarioRevision,
   ShellPayload,
   SolveRun,
   SourceSpan,
@@ -202,8 +203,59 @@ export function listScenarios(projectId: string): Promise<Scenario[]> {
   return request<Scenario[]>(`/projects/${projectId}/scenarios`)
 }
 
+export function createScenarioFromBaseline(
+  projectId: string,
+  baselineId: string,
+  payload: { name: string; notes?: string; expected_baseline_id?: string },
+): Promise<Scenario> {
+  return request<Scenario>(`/projects/${projectId}/scenarios/from-baseline/${baselineId}`, {
+    method: 'POST', body: JSON.stringify(payload),
+  })
+}
+
+export function createScenarioRevision(scenarioId: string, payload: Record<string, unknown>): Promise<ScenarioRevision> {
+  return request<ScenarioRevision>(`/scenarios/${scenarioId}/revisions`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function createWhatIfScenario(
+  scenarioId: string,
+  payload: { name: string; notes?: string; expected_parent_revision_id: string; changes: Array<Record<string, unknown>> },
+): Promise<ScenarioRevision> {
+  return request<ScenarioRevision>(`/scenarios/${scenarioId}/what-if`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function previewScenarioImpact(
+  scenarioId: string,
+  payload: { base_revision_id: string; changes: Array<Record<string, unknown>> },
+): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/scenarios/${scenarioId}/impact-preview`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function compareScenarioRevisions(scenarioId: string, leftRevisionId: string, rightRevisionId: string): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams({ left_revision_id: leftRevisionId, right_revision_id: rightRevisionId })
+  return request<Record<string, unknown>>(`/scenarios/${scenarioId}/compare?${params.toString()}`)
+}
+
 export function listSolveRuns(projectId: string): Promise<SolveRun[]> {
   return request<SolveRun[]>(`/projects/${projectId}/solve-runs`)
+}
+
+export function runTrainingScheduleSolve(
+  projectId: string,
+  payload: { scenario_revision_id: string; formal_model_id?: string; max_candidates?: number },
+): Promise<SolveRun> {
+  return request<SolveRun>(`/projects/${projectId}/solve-training-schedule`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function runPortfolioSolve(
+  projectId: string,
+  payload: { scenario_revision_id: string; formal_model_id?: string; max_candidates?: number },
+): Promise<SolveRun> {
+  return request<SolveRun>(`/projects/${projectId}/solve-portfolio`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function submitSolverExplanation(runId: string, payload: Record<string, unknown>): Promise<SolveRun> {
+  return request<SolveRun>(`/solve-runs/${runId}/explanation`, { method: 'POST', body: JSON.stringify(payload) })
 }
 
 export function seedDemoProject(): Promise<ProjectDetail> {
@@ -299,7 +351,15 @@ export function listBaselines(projectId: string): Promise<ModelingBaseline[]> {
 export function getMaterialPreview(
   projectId: string,
   materialId: string,
-  opts?: { start?: number; end?: number; page?: number | null; sheet?: string | null; cell?: string | null },
+  opts?: {
+    start?: number
+    end?: number
+    page?: number | null
+    sheet?: string | null
+    cell?: string | null
+    runId?: string | null
+    checksum?: string | null
+  },
 ): Promise<MaterialPreview> {
   const params = new URLSearchParams()
   if (opts?.start != null) params.set('start', String(opts.start))
@@ -307,12 +367,17 @@ export function getMaterialPreview(
   if (opts?.page != null) params.set('page', String(opts.page))
   if (opts?.sheet) params.set('sheet', opts.sheet)
   if (opts?.cell) params.set('cell_ref', opts.cell)
+  if (opts?.checksum) params.set('checksum', opts.checksum)
   const query = params.toString()
   const suffix = query ? `?${query}` : ''
+  if (opts?.runId) {
+    return request<MaterialPreview>(`/modeling-runs/${opts.runId}/materials/${materialId}/preview${suffix}`)
+  }
   return request<MaterialPreview>(`/projects/${projectId}/materials/${materialId}/preview${suffix}`)
 }
 
-export function materialContentUrl(projectId: string, materialId: string): string {
+export function materialContentUrl(projectId: string, materialId: string, runId?: string | null): string {
+  if (runId) return `/api/modeling-runs/${runId}/materials/${materialId}/content`
   return `/api/projects/${projectId}/materials/${materialId}/content`
 }
 

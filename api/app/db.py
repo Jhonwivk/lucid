@@ -21,7 +21,7 @@ from .states import (
     WORKFLOW_MATURITY_SQL,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 9
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = PACKAGE_ROOT.parent
 _DOTENV_LOADED = False
@@ -569,6 +569,85 @@ def _migrate_to_4(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_5(conn: sqlite3.Connection) -> None:
+    """At most one queued/running/waiting_for_user modeling run per project."""
+    rows = conn.execute(
+        """
+        SELECT id, project_id FROM modeling_run
+        WHERE status IN ('queued','running','waiting_for_user')
+        ORDER BY project_id, updated_at DESC, created_at DESC, id DESC
+        """
+    ).fetchall()
+    seen: set[str] = set()
+    now = utc_now()
+    for row in rows:
+        project_id = row["project_id"]
+        if project_id in seen:
+            conn.execute(
+                """
+                UPDATE modeling_run
+                SET status = 'failed',
+                    error_code = 'superseded_active_run',
+                    error_message = 'Closed because another active modeling run already existed for this analysis.',
+                    finished_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                  AND status IN ('queued','running','waiting_for_user')
+                """,
+                (now, now, row["id"]),
+            )
+        else:
+            seen.add(project_id)
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_modeling_run_one_active
+            ON modeling_run(project_id)
+            WHERE status IN ('queued','running','waiting_for_user')
+        """
+    )
+
+
+
+def _migrate_to_6(conn: sqlite3.Connection) -> None:
+    """Add structured formal-model payload and invalidation audit fields."""
+    _add_column_if_missing(conn, "formal_model", "definition_json", "TEXT")
+    _add_column_if_missing(conn, "formal_model", "definition_hash", "TEXT")
+    _add_column_if_missing(conn, "formal_model", "dependency_fingerprint", "TEXT")
+    _add_column_if_missing(conn, "scenario_revision", "invalidation_reason", "TEXT")
+    _add_column_if_missing(conn, "scenario_revision", "invalidated_at", "TEXT")
+
+
+def _migrate_to_7(conn: sqlite3.Connection) -> None:
+    """Persist executable candidate payloads and solver recovery metadata."""
+    _add_column_if_missing(conn, "result_candidate", "details_json", "TEXT")
+    for column, spec in (
+        ("result_json", "TEXT"),
+        ("explanation_json", "TEXT"),
+        ("provenance_json", "TEXT"),
+    ):
+        _add_column_if_missing(conn, "result_candidate", column, spec)
+    for column, spec in (
+        ("input_fingerprint", "TEXT"),
+        ("claim_owner", "TEXT"),
+        ("claim_token", "TEXT"),
+        ("heartbeat_at", "TEXT"),
+        ("stale_at", "TEXT"),
+        ("resume_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("lease_timeout_seconds", "INTEGER NOT NULL DEFAULT 120"),
+    ):
+        _add_column_if_missing(conn, "solve_run", column, spec)
+
+
+def _migrate_to_8(conn: sqlite3.Connection) -> None:
+    """Add persisted solver explanation evidence to existing solve runs."""
+    _add_column_if_missing(conn, "solve_run", "explanation_json", "TEXT")
+
+
+def _migrate_to_9(conn: sqlite3.Connection) -> None:
+    """Keep deleted material bytes out of active reads while preserving audit provenance."""
+    _add_column_if_missing(conn, "material", "deleted_at", "TEXT")
+
+
 def apply_migrations(conn: sqlite3.Connection) -> int:
     conn.execute(
         """
@@ -601,6 +680,31 @@ def apply_migrations(conn: sqlite3.Connection) -> int:
         _set_meta(conn, "schema_version", "4")
         current = 4
         _set_meta(conn, "bootstrap", "stage1-review-corrections")
+    if current < 5:
+        _migrate_to_5(conn)
+        _set_meta(conn, "schema_version", "5")
+        current = 5
+        _set_meta(conn, "bootstrap", "stage1-one-active-run")
+    if current < 6:
+        _migrate_to_6(conn)
+        _set_meta(conn, "schema_version", "6")
+        current = 6
+        _set_meta(conn, "bootstrap", "stage2-formalization")
+    if current < 7:
+        _migrate_to_7(conn)
+        _set_meta(conn, "schema_version", "7")
+        current = 7
+        _set_meta(conn, "bootstrap", "stage2-deterministic-solver")
+    if current < 8:
+        _migrate_to_8(conn)
+        _set_meta(conn, "schema_version", "8")
+        current = 8
+        _set_meta(conn, "bootstrap", "stage2-impact-explanations")
+    if current < 9:
+        _migrate_to_9(conn)
+        _set_meta(conn, "schema_version", "9")
+        current = 9
+        _set_meta(conn, "bootstrap", "stage2-data-boundaries")
     return current
 
 

@@ -10,6 +10,7 @@ api/.venv/
 data/*.db
 data/*.db-*
 data/materials/
+data/modeling_snapshots/
 data/backups/
 !data/.gitkeep
 .cache/

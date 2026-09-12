@@ -3,6 +3,7 @@ import {
   cancelModelingRun,
   errorMessage,
   freezeBaseline,
+  getModelingRun,
   listClaimHistory,
   resumeModelingRun,
   reviewClaim,
@@ -26,6 +27,12 @@ import {
   reviewLabel,
   sourceRefLabel,
 } from '../../lib/format'
+import {
+  materialFromSnapshot,
+  selectDraftForRun,
+  selectLatestModelingRun,
+  snapshotRunIdForSelection,
+} from '../../lib/sourceView'
 
 type ModelingWorkspaceProps = {
   projectId: string
@@ -39,7 +46,18 @@ type ModelingWorkspaceProps = {
 }
 
 const ACTIVE = new Set(['queued', 'running'])
-const REVIEW_KINDS = ['constraint', 'objective', 'unknown', 'conflict', 'parameter', 'entity'] as const
+const START_BLOCKED = new Set(['queued', 'running', 'waiting_for_user'])
+const REVIEW_KINDS = [
+  'constraint',
+  'objective',
+  'unknown',
+  'conflict',
+  'parameter',
+  'entity',
+  'assumption',
+  'variable',
+  'readiness',
+] as const
 
 function runStatusLabel(status: string, t: Translate): string {
   switch (status) {
@@ -62,6 +80,14 @@ function runStatusLabel(status: string, t: Translate): string {
   }
 }
 
+function missingModelKeys(readiness: ReadinessPayload): string[] {
+  const missing: string[] = []
+  if (!readiness.model.name_present) missing.push('LUCID_MODEL_NAME')
+  if (!readiness.model.base_url_present) missing.push('LUCID_MODEL_BASE_URL')
+  if (!readiness.model.api_key_present) missing.push('LUCID_MODEL_API_KEY')
+  return missing
+}
+
 export function ModelingWorkspace({
   projectId,
   question,
@@ -77,20 +103,47 @@ export function ModelingWorkspace({
   const [selectedId, setSelectedId] = useState<string | null>(materials[0]?.id ?? null)
   const [focusClaimId, setFocusClaimId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [answer, setAnswer] = useState('')
   const [editId, setEditId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [historyId, setHistoryId] = useState<string | null>(null)
   const [history, setHistory] = useState<ClaimReviewEvent[]>([])
-  const latestRun = runs[0] ?? null
-  const latestDraft = drafts[drafts.length - 1] ?? null
-  const pending = latestRun?.clarifications.find((item) => item.status === 'pending') ?? null
-  const selected = materials.find((item) => item.id === selectedId) ?? null
-  const selectedSpans = useMemo(
-    () => sourceSpans.filter((span) => span.material_id === selected?.id),
-    [sourceSpans, selected],
+  const [pinnedRunId, setPinnedRunId] = useState<string | null>(null)
+  const [polledRun, setPolledRun] = useState<ModelingRun | null>(null)
+  const latestFromList = useMemo(
+    () => selectLatestModelingRun(runs, pinnedRunId),
+    [runs, pinnedRunId],
   )
+  const latestRun = polledRun && latestFromList && polledRun.id === latestFromList.id
+    ? { ...latestFromList, ...polledRun }
+    : latestFromList
+  const latestRunId = latestRun?.id ?? null
+  const latestDraft = useMemo(() => selectDraftForRun(drafts, latestRunId), [drafts, latestRunId])
+  const canMutateDraft = Boolean(
+    latestDraft
+    && latestRunId
+    && latestDraft.run_id === latestRunId
+    && latestDraft.version_state !== 'confirmed',
+  )
+  const runInFlight = Boolean(
+    latestRun && (ACTIVE.has(latestRun.status) || latestRun.status === 'waiting_for_user'),
+  )
+  const pending = latestRun?.clarifications.find((item) => item.status === 'pending') ?? null
+  const snapshotMaterials = latestRun?.snapshot?.materials
+  const selectedSnapshot = snapshotMaterials?.find((item) => item.id === selectedId) ?? null
+  const liveSelected = materials.find((item) => item.id === selectedId) ?? null
+  const selected = selectedSnapshot
+    ? materialFromSnapshot(projectId, selectedSnapshot, liveSelected, latestRun?.created_at ?? '')
+    : liveSelected
+  const snapshotRunId = snapshotRunIdForSelection(latestRun, selectedId)
+  const selectedSpans = useMemo(() => {
+    const snap = snapshotMaterials?.find((item) => item.id === selectedId)
+    if (snap?.spans?.length) return snap.spans
+    return sourceSpans.filter((span) => span.material_id === selectedId)
+  }, [snapshotMaterials, selectedId, sourceSpans])
   const claims = useMemo(
     () => latestDraft?.claims.filter((claim) => REVIEW_KINDS.includes(claim.claim_kind as typeof REVIEW_KINDS[number])) ?? [],
     [latestDraft],
@@ -108,6 +161,7 @@ export function ModelingWorkspace({
       sheet: ref.sheet,
       cell: ref.cell_ref,
       precision: ref.precision,
+      region: ref.region,
     }
   }, [focused, selected])
   const related = useMemo(
@@ -115,20 +169,35 @@ export function ModelingWorkspace({
     [claims, selected],
   )
 
+  const pollRunId = latestRun && ACTIVE.has(latestRun.status) ? latestRun.id : null
+
   useEffect(() => {
-    if (!latestRun || !ACTIVE.has(latestRun.status)) return
+    if (!pollRunId) return
     const timer = window.setInterval(() => {
-      void reload()
+      void getModelingRun(pollRunId)
+        .then((payload) => {
+          if (payload.id !== pollRunId) return
+          setPolledRun(payload)
+          if (!ACTIVE.has(payload.status)) void reload()
+        })
+        .catch((err: unknown) => setError(errorMessage(err)))
     }, 1500)
     return () => window.clearInterval(timer)
-  }, [latestRun, reload])
+  }, [pollRunId, reload])
+
+  const modelReady = readiness.live_agent_possible
+  const missingKeys = missingModelKeys(readiness)
+  const runBusy = Boolean(latestRun && START_BLOCKED.has(latestRun.status))
+  const canStart = !busy && !runBusy && Boolean(question.trim()) && modelReady
 
   async function onStart() {
-    if (busy) return
+    if (!canStart) return
     setBusy(true)
     setError(null)
     try {
-      await startModelingRun(projectId, question || t('decisionQuestion'))
+      const started = await startModelingRun(projectId, question || t('decisionQuestion'))
+      setPinnedRunId(started.id)
+      setPolledRun(started)
       await reload()
     } catch (err) {
       setError(errorMessage(err))
@@ -142,7 +211,9 @@ export function ModelingWorkspace({
     setBusy(true)
     setError(null)
     try {
-      await resumeModelingRun(latestRun.id, answer.trim())
+      const resumed = await resumeModelingRun(latestRun.id, answer.trim())
+      setPinnedRunId(resumed.id)
+      setPolledRun(resumed)
       setAnswer('')
       await reload()
     } catch (err) {
@@ -152,14 +223,35 @@ export function ModelingWorkspace({
     }
   }
 
+  async function onCancel() {
+    if (!latestRun || cancelling) return
+    setCancelling(true)
+    setError(null)
+    try {
+      const cancelled = await cancelModelingRun(latestRun.id)
+      setPolledRun(cancelled)
+      await reload()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   async function onReview(claim: ModelingClaim, action: string, edited?: string) {
+    if (!canMutateDraft) return
     setBusy(true)
     setError(null)
     try {
       await reviewClaim(claim.id, action, edited)
       setEditId(null)
       if (historyId === claim.id) {
-        setHistory(await listClaimHistory(claim.id))
+        try {
+          setHistory(await listClaimHistory(claim.id))
+          setHistoryError(null)
+        } catch (err) {
+          setHistoryError(errorMessage(err))
+        }
       }
       await reload()
     } catch (err) {
@@ -170,7 +262,7 @@ export function ModelingWorkspace({
   }
 
   async function onFreeze() {
-    if (!latestDraft || busy) return
+    if (!canMutateDraft || !latestDraft || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -187,51 +279,69 @@ export function ModelingWorkspace({
     if (historyId === claimId) {
       setHistoryId(null)
       setHistory([])
+      setHistoryError(null)
       return
     }
     setHistoryId(claimId)
-    setHistory(await listClaimHistory(claimId))
+    setHistoryError(null)
+    try {
+      setHistory(await listClaimHistory(claimId))
+    } catch (err) {
+      setHistory([])
+      setHistoryError(errorMessage(err))
+    }
   }
 
-  const modelReady = readiness.live_agent_possible
   const grouped = REVIEW_KINDS.map((kind) => ({
     kind,
     items: claims.filter((claim) => claim.claim_kind === kind),
   })).filter((group) => group.items.length > 0)
+  const sourceList = snapshotMaterials && snapshotMaterials.length > 0
+    ? snapshotMaterials.map((item) => ({ id: item.id, filename: item.filename || t('unnamedSource') }))
+    : materials.map((item) => ({ id: item.id, filename: item.filename }))
 
   return (
     <div className="modeling-workbench">
       <div className={`status-strip${modelReady ? '' : ' blocked'}`}>
         <p>{modelReady ? t('serviceReady') : t('serviceBlocked')}</p>
+        {!modelReady && missingKeys.length > 0 ? (
+          <p className="muted">{t('missingModelKeys')}: {missingKeys.join(', ')}</p>
+        ) : null}
         <p className="muted">
           {readiness.live_azure_possible ? t('liveAzureReady') : t('azureBlockedBody')}
         </p>
       </div>
 
       <div className="modeling-toolbar">
-        <button className="btn btn-primary" type="button" disabled={busy || !question.trim()} onClick={() => void onStart()}>
-          {busy && !pending ? t('startingRun') : t('startModeling')}
+        <button
+          className="btn btn-primary"
+          type="button"
+          disabled={!canStart}
+          onClick={() => void onStart()}
+        >
+          {busy && !pending ? t('startingRun') : latestRun && (latestRun.status === 'failed' || latestRun.status === 'cancelled') ? t('newRun') : t('startModeling')}
         </button>
         {latestRun && ACTIVE.has(latestRun.status) ? (
-          <button className="btn btn-ghost" type="button" onClick={() => void cancelModelingRun(latestRun.id).then(() => reload())}>
-            {t('cancelRun')}
+          <button className="btn btn-ghost" type="button" disabled={cancelling} onClick={() => void onCancel()}>
+            {cancelling ? t('canceling') : t('cancelRun')}
           </button>
         ) : null}
         {latestRun ? (
           <span className="muted">
-            {runStatusLabel(latestRun.status, t)}
+            {t('runIdLabel')} {latestRun.id.slice(0, 8)} · {runStatusLabel(latestRun.status, t)} · {t('lastUpdated')} {latestRun.updated_at}
+            {latestRun.stale_input ? ` · stale_input` : ''}
             {latestRun.error_message ? ` — ${latestRun.error_message}` : ''}
           </span>
         ) : null}
       </div>
       {error ? <p role="alert">{error}</p> : null}
 
-      {pending ? (
+      {latestRun?.status === 'waiting_for_user' || pending ? (
         <section className="composer" aria-label={t('clarification')}>
           <h2>{t('clarification')}</h2>
-          <p>{t('pendingClarification')}</p>
-          <p><strong>{pending.question}</strong></p>
-          {pending.reason ? <p className="muted">{pending.reason}</p> : null}
+          <p>{t('waitingForClarificationBody')}</p>
+          {pending ? <p><strong>{pending.question}</strong></p> : null}
+          {pending?.reason ? <p className="muted">{pending.reason}</p> : null}
           <label className="field">
             <span>{t('answerClarification')}</span>
             <textarea value={answer} onChange={(event) => setAnswer(event.target.value)} rows={4} />
@@ -261,7 +371,7 @@ export function ModelingWorkspace({
         <aside className="modeling-sources">
           <h2>{t('materials')}</h2>
           <ul className="source-list">
-            {materials.map((material) => {
+            {sourceList.map((material) => {
               const coverage = latestRun?.coverage.find((item) => item.material_id === material.id)
               const count = claims.filter((claim) => claim.evidence_refs.some((ref) => ref.material_id === material.id)).length
               return (
@@ -285,11 +395,12 @@ export function ModelingWorkspace({
             })}
           </ul>
           <SourceViewer
-            key={selected?.id ?? 'none'}
+            key={`${snapshotRunId ?? 'live'}-${selected?.id ?? 'none'}`}
             projectId={projectId}
             material={selected}
             spans={selectedSpans}
             highlight={highlight}
+            runId={snapshotRunId}
           />
           <h3>{t('relatedClaims')}</h3>
           {related.length === 0 ? (
@@ -318,7 +429,10 @@ export function ModelingWorkspace({
         <section className="modeling-claims">
           <h2>{t('claims')}</h2>
           {!latestDraft ? (
-            <EmptyState title={t('noDraft')} body={t('noDraftBody')} />
+            <EmptyState
+              title={runInFlight ? t('draftInProgress') : t('noDraft')}
+              body={runInFlight ? t('draftInProgressBody') : latestRun ? t('runHasNoDraftBody') : t('noDraftBody')}
+            />
           ) : (
             <div className="stack">
               {grouped.map((group) => (
@@ -328,7 +442,10 @@ export function ModelingWorkspace({
                       : group.kind === 'unknown' ? t('unknownsSection')
                         : group.kind === 'conflict' ? t('conflictsSection')
                           : group.kind === 'parameter' ? t('parametersSection')
-                            : t('entitiesSection')}</h3>
+                            : group.kind === 'assumption' ? t('assumptionsSection')
+                              : group.kind === 'variable' ? t('variablesSection')
+                                : group.kind === 'readiness' ? t('readinessSection')
+                                  : t('entitiesSection')}</h3>
                   {group.items.map((claim) => (
                     <article className={`fact ${claim.review_status}${claim.id === focusClaimId ? ' selected-source' : ''}`} key={claim.id}>
                       <div className="fact-label">{claimKindHeading(claim.claim_kind, t)} · {reviewLabel(claim.review_status, t)}</div>
@@ -368,13 +485,14 @@ export function ModelingWorkspace({
                         </label>
                       ) : (
                         <div className="review-actions">
-                          <button className="btn btn-secondary" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => void onReview(claim, 'accepted')}>{t('reviewAccept')}</button>
-                          <button className="btn btn-secondary" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => void onReview(claim, 'rejected')}>{t('reviewReject')}</button>
-                          <button className="btn btn-secondary" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => void onReview(claim, 'not_applicable')}>{t('reviewNA')}</button>
-                          <button className="btn btn-ghost" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => { setEditId(claim.id); setEditText(claim.edited_statement || claim.proposed_interpretation || claim.original_statement) }}>{t('editClaim')}</button>
+                          <button className="btn btn-secondary" type="button" disabled={busy || !canMutateDraft} onClick={() => void onReview(claim, 'accepted')}>{t('reviewAccept')}</button>
+                          <button className="btn btn-secondary" type="button" disabled={busy || !canMutateDraft} onClick={() => void onReview(claim, 'rejected')}>{t('reviewReject')}</button>
+                          <button className="btn btn-secondary" type="button" disabled={busy || !canMutateDraft} onClick={() => void onReview(claim, 'not_applicable')}>{t('reviewNA')}</button>
+                          <button className="btn btn-ghost" type="button" disabled={busy || !canMutateDraft} onClick={() => { setEditId(claim.id); setEditText(claim.edited_statement || claim.proposed_interpretation || claim.original_statement) }}>{t('editClaim')}</button>
                           <button className="btn btn-ghost" type="button" onClick={() => void onHistory(claim.id)}>{t('reviewHistory')}</button>
                         </div>
                       )}
+                      {historyId === claim.id && historyError ? <p role="alert">{historyError}</p> : null}
                       {historyId === claim.id && history.length > 0 ? (
                         <ol className="activity-log">
                           {history.map((event) => (
@@ -390,7 +508,7 @@ export function ModelingWorkspace({
                 </div>
               ))}
               <p className="muted">{t('freezeNeedsReview')}</p>
-              <button className="btn btn-primary" type="button" disabled={busy || latestDraft.version_state === 'confirmed'} onClick={() => void onFreeze()}>
+              <button className="btn btn-primary" type="button" disabled={busy || !canMutateDraft} onClick={() => void onFreeze()}>
                 {busy ? t('freezing') : t('freezeBaseline')}
               </button>
             </div>
