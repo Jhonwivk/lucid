@@ -375,9 +375,17 @@ def _execute(run_id: str, resume: str | None) -> None:
         try:
             result = _invoke_with_deadline(graph, payload, config, run_id, run.get("wall_deadline_at"))
         except GraphInterrupt:
-            _finish(run_id, status="waiting_for_user", wall_deadline_at=None)
+            # ask_clarification() persists waiting_for_user before interrupt().
+            # A human can resume in the small window before this worker returns;
+            # never let this old worker overwrite the new worker's running claim.
+            current = persistence.get_run(run_id)
+            if current.get("status") == "waiting_for_user" and not current.get("resume_claim_id"):
+                try:
+                    persistence.append_event(run_id, kind="status", title="Waiting for clarification")
+                except persistence.StaleRunError:
+                    # A concurrent resume won the claim between the read and event.
+                    pass
             _forget_worker(run_id, threading.current_thread())
-            persistence.append_event(run_id, kind="status", title="Waiting for clarification")
             return
         state = graph.get_state(config)
         interrupts = []

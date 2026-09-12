@@ -244,6 +244,7 @@ def _provider_locators(cached: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _locator_map_matches(locators: list[dict[str, Any]], ref: EvidenceRef) -> bool:
+    provider_locator = ref.provider_locator if isinstance(ref.provider_locator, dict) else {}
     for item in locators:
         if ref.page is not None and item.get("page") != ref.page:
             continue
@@ -257,7 +258,12 @@ def _locator_map_matches(locators: list[dict[str, Any]], ref: EvidenceRef) -> bo
         if ref.region:
             if _region_key(item.get("region")) != _region_key(ref.region):
                 continue
-        return True
+        for key in ("locator_id", "offset", "length"):
+            expected = provider_locator.get(key)
+            if expected is not None and item.get(key) != expected:
+                break
+        else:
+            return True
     return False
 
 

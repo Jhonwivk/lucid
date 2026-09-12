@@ -119,6 +119,15 @@ export function BaselineWorkspace({
   return (
     <div className="stage">
       <p className="muted">{t('frozenAlready')}</p>
+      {canFreeze ? (
+        <p>
+          <button className="btn btn-primary" type="button" disabled={busy} onClick={() => void onFreeze()}>
+            {busy ? t('freezing') : t('freezeBaseline')}
+          </button>
+        </p>
+      ) : runInFlight ? (
+        <EmptyState title={t('draftInProgress')} body={t('draftInProgressBody')} />
+      ) : null}
       {ordered.length > 1 ? (
         <div className="stack">
           <h3>{t('historicalBaselines')}</h3>

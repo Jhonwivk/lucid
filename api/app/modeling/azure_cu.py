@@ -246,6 +246,9 @@ def _to_jsonable(value: Any) -> Any:
         return {"repr": type(value).__name__}
 
 
+MAX_PUBLIC_LOCATORS = 128
+
+
 def public_locator_map(derived: Any) -> list[dict[str, Any]]:
     """Bounded locator rows for Agent tools. No URLs, tokens, or raw provider secrets."""
     locators: list[Any] = []
@@ -260,21 +263,24 @@ def public_locator_map(derived: Any) -> list[dict[str, Any]]:
         locator_id = item.get("locator_id") or f"az-loc-{index + 1}"
         original = item.get("original_coordinates")
         has_mapped_original = original == "mapped" and any(
-            item.get(key) not in (None, "") for key in ("sheet", "cell_ref", "cell", "region")
+            item.get(key) not in (None, "")
+            for key in ("page", "sheet", "cell_ref", "cell", "region")
         )
         out.append(
             {
                 "locator_id": str(locator_id),
+                "kind": item.get("kind"),
                 "page": item.get("page"),
                 "sheet": item.get("sheet"),
                 "cell_ref": item.get("cell_ref") or item.get("cell"),
+                "region": item.get("region"),
                 "offset": item.get("offset"),
                 "length": item.get("length"),
                 "coordinate_system": item.get("coordinate_system") or "azure_markdown",
                 "original_coordinates": "mapped" if has_mapped_original else "unknown",
             }
         )
-    return out
+    return out[:MAX_PUBLIC_LOCATORS]
 
 
 def derive_representation(raw: Any) -> dict[str, Any]:
@@ -311,9 +317,46 @@ def derive_representation(raw: Any) -> dict[str, Any]:
                                 "page": item.get("pageNumber") or item.get("page"),
                                 "sheet": item.get("sheet"),
                                 "cell_ref": item.get("cell_ref") or item.get("cell"),
+                                "region": item.get("region"),
+                                "kind": item.get("kind") or item.get("type"),
                                 "original_coordinates": "unknown",
                             }
                         )
+        for content in contents:
+            if not isinstance(content, dict) or not isinstance(content.get("spans"), list):
+                continue
+            for item in content["spans"]:
+                if not isinstance(item, dict):
+                    continue
+                locators.append(
+                    {
+                        "locator_id": f"az-loc-{len(locators) + 1}",
+                        "coordinate_system": "azure_markdown",
+                        "offset": item.get("offset"),
+                        "length": item.get("length"),
+                        "page": (
+                            item.get("pageNumber")
+                            or item.get("page")
+                            or content.get("pageNumber")
+                            or content.get("page")
+                        ),
+                        "sheet": item.get("sheet") or content.get("sheet"),
+                        "cell_ref": (
+                            item.get("cell_ref")
+                            or item.get("cell")
+                            or content.get("cell_ref")
+                            or content.get("cell")
+                        ),
+                        "region": item.get("region") or content.get("region"),
+                        "kind": (
+                            item.get("kind")
+                            or item.get("type")
+                            or content.get("kind")
+                            or content.get("type")
+                        ),
+                        "original_coordinates": "unknown",
+                    }
+                )
     text = markdown if isinstance(markdown, str) else None
     if text is None and contents:
         parts = []
@@ -328,6 +371,7 @@ def derive_representation(raw: Any) -> dict[str, Any]:
                         "page": item.get("pageNumber") or item.get("page"),
                         "sheet": item.get("sheet"),
                         "cell_ref": item.get("cell_ref") or item.get("cell"),
+                        "region": item.get("region"),
                         "offset": item.get("offset"),
                         "length": item.get("length"),
                         "original_coordinates": "unknown",

@@ -113,6 +113,7 @@ def main() -> None:
     from app.modeling.snapshot import get_snapshot_material, live_material_file, read_snapshot_bytes
     from app.modeling.draft import EvidenceRef
     from app.modeling.provenance import validate_ref
+    from app.modeling.azure_cu import derive_representation
     from app.modeling.tools import read_source, understand_material
     from app.schemas import ProjectCreate
 
@@ -1383,9 +1384,43 @@ def main() -> None:
     )
     try:
         understood = json.loads(understand_material.invoke({"material_id": az_src["material"]["id"]}))
+        read_payload = json.loads(
+            read_source.invoke(
+                {
+                    "material_id": az_src["material"]["id"],
+                    "derived": True,
+                    "start_offset": 0,
+                    "end_offset": len(azure_markdown),
+                }
+            )
+        )
     finally:
         CURRENT_RUN.reset(az_token)
     understood_blob = json.dumps(understood)
+    read_locators = read_payload.get("provider_locators") or []
+    expect(any(item.get("locator_id") == "az-loc-1" for item in read_locators), read_payload)
+    nested = derive_representation(
+        {
+            "result": {
+                "contents": [
+                    {
+                        "markdown": "hello",
+                        "pageNumber": 2,
+                        "spans": [{"offset": 0, "length": 5}],
+                    }
+                ]
+            }
+        }
+    )
+    expect(
+        any(
+            item.get("page") == 2
+            and item.get("offset") == 0
+            and item.get("length") == 5
+            for item in nested["provider_locators"]
+        ),
+        nested,
+    )
     expect("continuation_token" not in understood, understood)
     expect("operation_url" not in understood, understood)
     expect("PRIVATE" not in understood_blob, understood_blob)
@@ -1418,6 +1453,16 @@ def main() -> None:
     )
     az_fresh = persistence.get_run(az_run["id"])
     expect(validate_ref(az_fresh, constructed) is None, validate_ref(az_fresh, constructed))
+    mismatched = EvidenceRef.model_validate(
+        {
+            **constructed.model_dump(),
+            "provider_locator": {
+                **(constructed.provider_locator or {}),
+                "offset": (loc.get("offset") or 0) + 1,
+            },
+        }
+    )
+    expect(validate_ref(az_fresh, mismatched) is not None, mismatched)
 
     print("PASS: stage1 recovery/snapshot/provenance/export/state-machine")
     print(f"isolated_data_dir={TMP}")
