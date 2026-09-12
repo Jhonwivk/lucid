@@ -1338,6 +1338,12 @@
 .brief-arrow { color: var(--margin); }
 .next-action { color: var(--margin); line-height: 1.55; font-size: .86rem; }
 .brief-action { width: 100%; margin-top: 7px; }
+.resource-list { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
+.resource-chip { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; text-align: left; border: 1px solid var(--line); border-radius: var(--radius-row); background: var(--paper); color: var(--ink); }
+.resource-chip > span:first-child { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: #eaf3ff; color: var(--link); }
+.resource-chip strong, .resource-chip small { display: block; }
+.resource-chip strong { font-size: .8rem; }
+.resource-chip small { margin-top: 2px; color: var(--margin); font-size: .72rem; }
 .brief-composer { margin-top: 20px; padding: 18px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; box-shadow: none; }
 .composer-heading { display: flex; align-items: center; justify-content: space-between; }
 .composer-heading .btn { min-height: 28px; padding: 0 8px; font-size: 1.2rem; }
