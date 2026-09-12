@@ -80,7 +80,22 @@ export function WorkbenchPage() {
         ) : null}
 
         {viewState === 'ready' && showing ? (
-          <>
+          <div className="workspace-frame">
+            <aside className="project-rail" aria-label={t('projectNavigation')}>
+              <div className="rail-project">
+                <span className="rail-overline">{t('currentProject')}</span>
+                <strong>{showing.project.title}</strong>
+                <span className="rail-status"><i />{t('ready')}</span>
+              </div>
+              <nav className="rail-nav">
+                <Link className="rail-link" to={`/analyses/${projectId}/materials`}><span className="rail-icon icon-overview" aria-hidden="true" />{t('overview')}</Link>
+                <Link className="rail-link active" to={`/analyses/${projectId}/results`}><span className="rail-icon icon-analysis" aria-hidden="true" />{t('analysis')}</Link>
+                <Link className="rail-link" to={`/analyses/${projectId}/materials`}><span className="rail-icon icon-documents" aria-hidden="true" />{t('documents')}</Link>
+                <Link className="rail-link" to="/analyses"><span className="rail-icon icon-settings" aria-hidden="true" />{t('settings')}</Link>
+              </nav>
+              <div className="rail-footer"><span>{t('lastSaved')}</span><strong>{formatTimestamp(showing.project.updated_at, locale, t)}</strong></div>
+            </aside>
+            <div className="workspace-content">
             {stale && error ? (
               <p className="notice warn" role="status">
                 {t('staleReload')} {error}{' '}
@@ -162,7 +177,8 @@ export function WorkbenchPage() {
                 ) : null}
               </main>
             </div>
-          </>
+            </div>
+          </div>
         ) : null}
       </div>
     </div>

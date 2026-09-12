@@ -1015,6 +1015,122 @@
   }
 }
 
+/* Product concept layout: a quiet project rail with a focused work surface. */
+.workspace-frame {
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.project-rail {
+  position: sticky;
+  top: 20px;
+  min-height: calc(100vh - 100px);
+  padding: 18px 12px;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-project {
+  display: grid;
+  gap: 7px;
+  padding: 4px 10px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.rail-overline,
+.rail-footer {
+  color: var(--faint);
+  font-size: var(--step-0);
+}
+
+.rail-project strong {
+  color: var(--ink-deep);
+  line-height: 1.35;
+}
+
+.rail-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--margin);
+  font-size: var(--step-0);
+}
+
+.rail-status i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.rail-nav {
+  display: grid;
+  gap: 4px;
+  padding-top: 18px;
+}
+
+.rail-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 10px;
+  color: var(--margin);
+  border-radius: var(--radius-row);
+}
+
+.rail-link:hover,
+.rail-link.active {
+  color: var(--steel);
+  background: var(--surface);
+}
+
+.rail-icon {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  color: currentColor;
+}
+
+.icon-overview::before,
+.icon-overview::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+}
+
+.icon-overview::after { inset: 6px 2px 2px 6px; background: var(--surface); }
+.icon-analysis::before { content: ''; position: absolute; left: 2px; bottom: 2px; width: 3px; height: 8px; background: currentColor; box-shadow: 5px -4px currentColor, 10px -8px currentColor; }
+.icon-documents::before { content: ''; position: absolute; inset: 1px 3px; border: 1.5px solid currentColor; border-radius: 2px; box-shadow: 3px 3px 0 -1px var(--paper), 3px 3px 0 .5px currentColor; }
+.icon-settings::before { content: ''; position: absolute; inset: 3px; border: 1.5px solid currentColor; border-radius: 50%; box-shadow: 0 0 0 3px var(--paper), 0 0 0 4.5px currentColor; }
+
+.rail-footer {
+  display: grid;
+  gap: 3px;
+  margin-top: auto;
+  padding: 18px 10px 2px;
+}
+
+.rail-footer strong { color: var(--margin); font-weight: 500; }
+
+.workspace-content { min-width: 0; }
+
+@media (max-width: 760px) {
+  .workspace-frame { display: block; }
+  .project-rail { position: static; min-height: 0; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px 0 12px; }
+  .rail-project { display: flex; flex-wrap: wrap; align-items: center; padding: 0 0 12px; }
+  .rail-project strong { flex: 1 1 100%; }
+  .rail-nav { display: flex; overflow-x: auto; padding-top: 10px; }
+  .rail-link { flex: 0 0 auto; padding: 0 10px; }
+  .rail-footer { display: none; }
+}
+
 .modeling-workbench {
   display: grid;
   gap: 16px;
