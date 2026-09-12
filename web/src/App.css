@@ -1339,6 +1339,8 @@
 .next-action { color: var(--margin); line-height: 1.55; font-size: .86rem; }
 .brief-action { width: 100%; margin-top: 7px; }
 .brief-composer { margin-top: 20px; padding: 18px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; box-shadow: none; }
+.composer-heading { display: flex; align-items: center; justify-content: space-between; }
+.composer-heading .btn { min-height: 28px; padding: 0 8px; font-size: 1.2rem; }
 .brief-composer h3 { margin: 0; font-size: 1.05rem; }
 .brief-composer > p { margin: 6px 0 14px; }
 .brief-composer .field textarea { min-height: 64px; }
@@ -1346,6 +1348,15 @@
 
 @media (max-width: 980px) { .concept-layout { grid-template-columns: 1fr; } .decision-brief { order: -1; } }
 @media (max-width: 680px) { .analysis-board { padding: 18px; } .board-heading { display: block; } .board-heading .btn { margin-top: 16px; width: 100%; } .board-toolbar { display: block; } .board-toolbar .search-field { max-width: none; } .board-toolbar .filter-row { margin-top: 10px; overflow-x: auto; } }
+
+@media (min-width: 1100px) {
+  .page:has(.concept-layout) { padding-top: 18px; }
+  .page:has(.concept-layout) .topbar { margin-bottom: 16px; padding-bottom: 12px; }
+  .workflow-steps { margin-bottom: 22px; }
+  .template-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .template-row { min-height: 198px; padding: 15px; }
+  .template-copy p { min-height: 42px; }
+}
 
 @media (max-width: 980px) {
   .page:has(.masthead) .masthead { gap: 28px; }
