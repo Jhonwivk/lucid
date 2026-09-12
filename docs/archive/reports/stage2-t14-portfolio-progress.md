@@ -1,5 +1,7 @@
 # Stage 2 T14 portfolio selection
 
+> Historical checkpoint. Superseded by [current release status](../../status.md). This file is retained for audit context and is not a current plan.
+
 T14 now has a bounded executable portfolio-selection slice. A formal model with
 `family=portfolio` contains a finite item list, a budget, item values, required
 items, and pairwise conflicts. `POST /api/projects/{project_id}/solve-portfolio`

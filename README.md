@@ -1,163 +1,114 @@
 # LUCID
 
-Single-user **business-modeling and deterministic decision workbench** (Stage 1 evidence/review plus Stage 2 formalization, solving, comparison, and export).
+LUCID is a single-user workbench that turns business evidence into a reviewed formal model, runs bounded deterministic decision solvers, and shows the evidence behind each result.
 
-LUCID turns a decision question and whatever materials you already have into a source-grounded modeling draft for human review, then a confirmed baseline. It does **not** present unverified AI interpretation as business truth, and it does **not** run a solver in Stage 1.
+The current release implements Stage 2 T11–T19 locally. T20 remains the only open acceptance gate because it requires two live Agent-backed runs with real user materials.
 
-Current docs: [docs/README.md](docs/README.md). Visual direction: [DESIGN.md](DESIGN.md) (Notion DESIGN.md fetched 2026-09-12 and adapted; not a marketing clone). Delivery summary: [docs/reports/stage1-handoff.md](docs/reports/stage1-handoff.md).
+## What the product does
 
-## Scope (MVP)
-
-In scope:
-
-- finite resource allocation / scheduling (primary vertical slice)
-- finite portfolio / combination selection
-- replanning / condition comparison across those families
-
-Out of scope for MVP:
-
-- multi-user collaboration, orgs, roles, invitations, approvals
-- Agent orchestration console / AI coding product
-- enterprise knowledge platform or universal strategy optimizer
-- automatic enterprise governance, external execution, payments
-
-## Stack
-
-| Layer | Choice |
-| --- | --- |
-| Web UI | Vite + React + TypeScript |
-| API | FastAPI (Python) |
-| Persistence | SQLite (`data/lucid.db`) |
-| Solver path | Deterministic Python training-schedule backtracking + portfolio enumeration via the API |
-
-See [docs/adr/ADR-0001-stack-and-runtime.md](docs/adr/ADR-0001-stack-and-runtime.md).
-
-## Quick start
-
-Prerequisites: Node.js 20+, Python 3.11+ (3.12 recommended), `uv` or `pip`.
-
-```bash
-# API
-cd api
-source .venv/bin/activate   # created during bootstrap; or: uv venv && uv pip install -r requirements.txt
-uvicorn app.main:app --app-dir . --host 127.0.0.1 --port 8000 --reload
-
-# Web (separate terminal)
-cd web
-npm install
-npm run dev
+```text
+materials → Agent draft → human review → confirmed baseline
+→ typed scenario/model → deterministic solve
+→ candidates + explanation + provenance → what-if → compare → export
 ```
 
-Or from the repo root:
+The product supports two bounded model families:
+
+- training schedules: sessions, time slots, rooms, instructors, capacity, availability, skills, overlap, workload and explicit objectives;
+- portfolio selection: budget, required items, conflicts and maximize-value ranking.
+
+Unknown or unsupported semantics stay blocked as `model_invalid`. The system never invents a rule, schedule or number.
+
+## Run locally
+
+Requirements: Python 3.11+, Node.js 20+, and `uv` or `pip`.
 
 ```bash
 ./scripts/dev.sh
 ```
 
-- Landing / product shell: **http://127.0.0.1:5173/** (redirects to My Analyses)
-- My Analyses: **http://127.0.0.1:5173/analyses**
-- Workbench: **http://127.0.0.1:5173/analyses/:projectId/materials** (also `/modeling`, `/baseline`, `/results`; `/understanding` and `/scenarios` redirect)
-- API health: **http://127.0.0.1:8000/api/health**
-- Readiness (non-secret presence only): **http://127.0.0.1:8000/api/readiness**
-- Persistence: SQLite file `data/lucid.db` (schema 9: formal models, solver candidates, recovery leases, and material deletion metadata). Optional demo seed: `POST http://127.0.0.1:8000/api/dev/seed-demo`.
-- Composer: `POST /api/analyses/start` with `{ "title", "question", "text"? }`. A non-blank question is enough.
-- Modeling: `POST /api/projects/{id}/modeling-runs`. Missing live model config fails honestly (`model_not_configured`); it does not emit a fake draft. After a confirmed baseline, Stage 2 formalization and deterministic solve endpoints are available.
-- Templates (T05): `GET /api/templates` lists six bilingual fixtures. `POST /api/templates/{id}/instantiate`. UI language is `en` / `zh-CN`.
-- Import: peer Materials including `.json` / `.docx` / `.pptx` as raw files for Azure. Direct text: `POST /api/projects/{id}/materials/text`. Files: `POST /api/projects/{id}/materials/import`. Limit 12 MiB. No PDF OCR.
+Or start the API and web app separately:
 
-## Repository map
+```bash
+cd api
+uv venv
+uv pip install -r requirements.txt
+uvicorn app.main:app --app-dir . --host 127.0.0.1 --port 8000 --reload
 
-```
-lucid/
-  api/                 FastAPI service + SQLite bootstrap
-  web/                 Vite React workbench UI
-  data/                Local SQLite database (gitignored contents)
-  docs/                 Current Stage 1 docs (see docs/README.md)
-  DESIGN.md            Stage 1 visual direction (Notion DESIGN.md fetched 2026-09-12, adapted)
-  specs/001-first-release/  Spec, plan, acceptance, tasks
-  scripts/             Local demo helpers
-  AGENTS.md            Agent working agreements
+cd web
+npm install
+npm run dev
 ```
 
-## Product docs
+Open <http://127.0.0.1:5173/>. The API health check is <http://127.0.0.1:8000/api/health> and the non-secret provider status is <http://127.0.0.1:8000/api/readiness>.
 
-- [Docs index](docs/README.md)
+## Provider configuration
+
+The deterministic Stage 2 solvers do not need a model API. The Stage 1 Business Modeling Agent needs:
+
+```text
+LUCID_MODEL_NAME
+LUCID_MODEL_BASE_URL
+LUCID_MODEL_API_KEY
+```
+
+Complex-file understanding can additionally use Azure Content Understanding:
+
+```text
+AZURE_CONTENT_UNDERSTANDING_ENDPOINT
+AZURE_CONTENT_UNDERSTANDING_KEY
+```
+
+Without these settings, the app reports a configuration blocker and does not manufacture an Agent draft. Copy `.env.example` to `.env`; never commit secrets.
+
+## Main API path
+
+| Step | Endpoint |
+| --- | --- |
+| Create project | `POST /api/projects` |
+| Add text or file evidence | `POST /api/projects/{id}/materials/text` or `/materials/import` |
+| Start Agent modeling | `POST /api/projects/{id}/modeling-runs` |
+| Create scenario from confirmed baseline | `POST /api/projects/{id}/scenarios/from-baseline/{baseline_id}` |
+| Create what-if revision | `POST /api/scenarios/{scenario_id}/what-if` |
+| Preview impact | `POST /api/scenarios/{scenario_id}/impact-preview` |
+| Solve training schedule | `POST /api/projects/{id}/solve-training-schedule` |
+| Solve portfolio | `POST /api/projects/{id}/solve-portfolio` |
+| Compare revisions | `GET /api/scenarios/{scenario_id}/compare` |
+| Resume a stale solver run | `POST /api/projects/{id}/solve-runs/{run_id}/resume` |
+| Export JSON/Markdown | `GET /api/projects/{id}/solve-runs/{run_id}/export.json` or `.md` |
+| Delete material content | `DELETE /api/projects/{id}/materials/{material_id}` |
+
+The web workbench exposes the same path through Materials, Modeling, Baseline and Results.
+
+## Verification
+
+Focused checks use isolated temporary databases and real FastAPI/SQLite paths:
+
+```bash
+python scripts/verify_t11_formalization.py
+python scripts/verify_t11_material_lineage.py
+python scripts/verify_t12_training_solver.py
+python scripts/verify_t13_t14_t16.py
+python scripts/verify_t14_portfolio_solver.py
+python scripts/verify_t17_t19_solver_history.py
+python scripts/verify_t19_material_delete.py
+cd web && npm run build && npm run lint
+```
+
+The repository also contains Stage 1 intake and review verifiers. The current task status is in [specs/001-first-release/tasks.md](specs/001-first-release/tasks.md).
+
+## Scope and boundaries
+
+LUCID is intentionally single-user. It is not a collaboration platform, Agent console, universal optimizer, route planner, payment system or enterprise governance product. Importers preserve evidence; the Agent interprets it; the formal model and deterministic solver decide only within the supported typed families.
+
+## Documentation
+
+Start with [the documentation index](docs/README.md). The five current documents are:
+
 - [Product baseline](docs/source/PRODUCT_BASELINE.md)
-- [Business Modeling Agent](docs/architecture/business-modeling-agent.md)
-- [Stage 1 handoff](docs/reports/stage1-handoff.md)
-- [Stage 1 review](docs/reports/stage1-review.md)
-- [Stage 1 acceptance](docs/reports/stage1-acceptance.md)
-- [DESIGN.md](DESIGN.md)
-- [Stack ADR](docs/adr/ADR-0001-stack-and-runtime.md)
-- [Persistence ADR](docs/adr/ADR-0002-persistence-contract.md)
-- [T05 i18n + templates](docs/design/T05-i18n-templates.md)
-- [First-release spec](specs/001-first-release/spec.md)
-- [Task plan](specs/001-first-release/tasks.md)
+- [Agent and evidence architecture](docs/architecture/business-modeling-agent.md)
+- [Current release status](docs/status.md)
+- [First-release specification](specs/001-first-release/spec.md)
+- [Task and acceptance status](specs/001-first-release/tasks.md)
 
-## Persistence (T03)
-
-Local SQLite contract for AnalysisProject, material metadata, source spans, versioned understanding/baselines, rules, scenarios, formal-model metadata, SolveRun records, result-candidate metadata, and change history.
-
-- Unknown costs / permissions / capacities stay SQL `NULL` (never coerced to `0` / `false`).
-- Edits create new revisions; historical snapshot rows are not rewritten.
-- SolveRun stores executable candidates, explanations, provenance, input fingerprints, and recovery lease metadata. Stage 2 solver execution is deterministic and bounded to the typed training-schedule and portfolio slices.
-- Proof helper: `python scripts/verify_t03_persistence.py` (uses a temp DB).
-
-Useful endpoints:
-
-| Method | Path |
-| --- | --- |
-| POST/GET | `/api/projects` |
-| GET/PATCH | `/api/projects/{id}` |
-| POST/GET | `/api/projects/{id}/materials` |
-| POST | `/api/projects/{id}/materials/import` |
-| POST | `/api/projects/{id}/materials/text` |
-| GET | `/api/projects/{id}/source-spans` |
-| POST | `/api/projects/{id}/understandings` |
-| GET | `/api/understandings/{id}` |
-| POST/GET | `/api/projects/{id}/scenarios` |
-| POST | `/api/scenarios/{id}/revisions` |
-| POST/GET | `/api/projects/{id}/solve-runs` |
-| POST | `/api/dev/seed-demo` |
-| GET | `/api/templates` |
-| POST | `/api/templates/{id}/instantiate` |
-
-See [docs/adr/ADR-0002-persistence-contract.md](docs/adr/ADR-0002-persistence-contract.md).
-
-## Templates (T05)
-
-Six auditable fictional mixed-material fixtures live under `fixtures/templates/`. Instantiation seeds T03 persistence from the authored `template.json` manifest and copies honest file metadata (byte size, SHA-256) from the real fixture bytes.
-
-This built-in template loader is **not** the general import pipeline. General intake is T06–T08 (`POST /api/projects/{id}/materials/import` and `POST /api/projects/{id}/materials/text`). Templates still do not extract business semantics with an LLM. Independent counts and honesty checks live in each `expected.json`. Proof helper: `python scripts/verify_t05_templates.py` (uses a temp DB).
-
-| Template | Sources |
-| --- | --- |
-| Training Schedule / 培训排程 | Markdown + CSV + PDF |
-| Vehicle Validation Bench / 整车验证台架排程 | XLSX + PDF + PNG |
-| Factory Maintenance Window / 工厂检修窗口排程 | CSV + Markdown + PNG |
-| Supplier Capacity Allocation / 供应商产能分配 | XLSX + CSV + PDF |
-| Product Portfolio Selection / 产品组合选择 | JSON + Markdown |
-| Retail Campaign Slotting / 零售活动档期组合 | CSV + JSON + TXT |
-
-## Materials (T06–T08)
-
-Materials workspace records a non-empty **Evidence Set**. PDF, TXT/Markdown, CSV/XLSX, images, JSON/DOCX/PPTX (raw), and **direct user-entered text** are optional peers. No source type is mandatory. T09/T10 (Stage 1 Agent + review) consume this Evidence Set. Importers still do not extract business meaning.
-
-- Direct text: `POST /api/projects/{project_id}/materials/text` with JSON `{ "text": "...", "label": "optional source label" }`. Stored as `kind=document`, `media_type=text/plain`, UTF-8 bytes/checksum, `source_origin=direct_text`. The `filename` column is a compatibility/source-label field.
-- Files: `POST /api/projects/{project_id}/materials/import` (multipart field name `file`)
-- Limit: **12 MiB** per item; tables also have a 5000-row / 25000-cell safety budget
-- Persistence: copied bytes under `data/materials/{project_id}/` with a UUID-prefixed stored name
-- Provenance: SourceSpan rows (`text_range` for text; 1-based `page` for PDF; `sheet` + A1 `cell_ref` for tables; one full-image `region` for images)
-- CSV/XLSX: blank cells stay blank/unknown; formulas are stored as formula text and are not recalculated; unit hints are copied only from explicit header/value forms
-- Images: PNG/JPEG bytes, Pillow-validated dimensions/format/mode/checksum, and exactly one honest full-image region (`x=0,y=0,width=1,height=1`, `region_state=full_image`). Semantic understanding is **not** performed during intake. No Grok/xAI/macOS Vision/OCR call.
-- Not in T06–T08: LLM business understanding, RAG, solver execution, legacy `.xls`
-- Encrypted PDFs and malformed files are rejected (4xx), not decrypted
-- Proof helpers: `python scripts/verify_t06_import.py`, `python scripts/verify_t07_tables.py`, `python scripts/verify_t08_images.py`, `python scripts/verify_material_abstraction.py`
-
-## Status
-
-M0–M2 (T01–T08) remain verified.
-
-**Stage 1 (T09/T10 mapping):** one Business Modeling Agent, one Azure Content Understanding tool, human review, confirmed baseline export, bilingual workbench. No solver. LIVE Agent/Azure runs require local `LUCID_MODEL_*` and Azure CU settings.
-
-T11–T19 are implemented and locally verified, including a real deterministic training-schedule and portfolio solver. T20 still requires two live Agent-backed acceptance runs; do not treat a draft or a metadata-only SolveRun as an executed schedule.
+Architecture decisions and historical reports remain available under `docs/adr/`, `docs/design/` and `docs/archive/`, but they are not additional current plans.

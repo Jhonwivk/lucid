@@ -1,5 +1,7 @@
 # Stage 2 T12: executable training-schedule solver
 
+> Historical checkpoint. Superseded by [current release status](../../status.md). This file is retained for audit context and is not a current plan.
+
 T12 now has one real, deterministic vertical slice. A `training_schedule`
 formal definition contains sessions, finite time slots, rooms, and instructors.
 The compiler validates these typed entities and the solver exhaustively searches

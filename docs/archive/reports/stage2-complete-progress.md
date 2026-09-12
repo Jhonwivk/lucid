@@ -1,5 +1,7 @@
 # Stage 2 implementation report
 
+> Historical checkpoint. Superseded by [current release status](../../status.md). This file is retained for audit context and is not a current plan.
+
 Date: 2026-09-12.
 Branch: `cursor/stage1-recoverable-frozen-review-loop`.
 

@@ -1,31 +1,21 @@
-# Docs index — LUCID
+# LUCID documentation
 
-Current Stage 1 documents first. Historical M0–M2 notes stay linked; they are not deleted.
+There is one current product path and one current status source. Historical reports are kept for audit context, but they do not create a second plan.
 
-## Current (Stage 1, 2026-09-12)
+## Read these first
 
-| Document | Role |
-| --- | --- |
-| [AGENTS.md](../AGENTS.md) | Binding working agreements for humans and agents |
-| [README.md](../README.md) | How to run the product |
-| [DESIGN.md](../DESIGN.md) | Stage 1 workbench visual direction (Notion DESIGN.md fetched 2026-09-12 and adapted) |
-| [source/PRODUCT_BASELINE.md](source/PRODUCT_BASELINE.md) | Product definition |
-| [architecture/business-modeling-agent.md](architecture/business-modeling-agent.md) | One Agent, one Azure service, draft/review/baseline |
-| [reports/stage1-handoff.md](reports/stage1-handoff.md) | Delivery summary |
-| [reports/stage1-review.md](reports/stage1-review.md) | Review findings and fixes |
-| [reports/stage1-acceptance.md](reports/stage1-acceptance.md) | What was verified vs what LIVE still blocks |
-| [specs/001-first-release/spec.md](../specs/001-first-release/spec.md) | Full first-release spec; Stage 2 implementation status and T20 gate are marked at the top |
-| [specs/001-first-release/plan.md](../specs/001-first-release/plan.md) | Historical M0–M6 map; Stage 1 = T09/T10 locally |
-| [specs/001-first-release/tasks.md](../specs/001-first-release/tasks.md) | T01–T20 status. T11–T19 are locally verified; T20 remains blocked on live acceptance runs |
-| [specs/001-first-release/acceptance.md](../specs/001-first-release/acceptance.md) | Milestone gates + Stage 1 local checkboxes |
+1. [README](../README.md) — install, run, provider configuration and API path.
+2. [Product baseline](source/PRODUCT_BASELINE.md) — product boundary, evidence rules and supported model families.
+3. [Agent and evidence architecture](architecture/business-modeling-agent.md) — how materials become a reviewed baseline and then a formal model.
+4. [Current release status](status.md) — T11–T19 implementation and the T20 acceptance gate.
+5. [First-release specification](../specs/001-first-release/spec.md) and [task status](../specs/001-first-release/tasks.md) — scope and verification state.
 
-Older `/Users/hairen/project/.tasks/lucid-stage1-*.md` files are historical execution records. They are not a second current plan.
+## Reference material
 
-## Historical (keep)
+- [Stack ADR](adr/ADR-0001-stack-and-runtime.md)
+- [Persistence ADR](adr/ADR-0002-persistence-contract.md)
+- [Visual design](../DESIGN.md)
+- [Template and language design](design/T05-i18n-templates.md)
+- [Archive index](archive/README.md)
 
-| Document | Role |
-| --- | --- |
-| [adr/ADR-0001-stack-and-runtime.md](adr/ADR-0001-stack-and-runtime.md) | Vite + FastAPI + SQLite |
-| [adr/ADR-0002-persistence-contract.md](adr/ADR-0002-persistence-contract.md) | Project / understanding / scenario / SolveRun |
-| [design/T04-visual-direction.md](design/T04-visual-direction.md) | M2 “collation desk”; superseded for Stage 1 UI by DESIGN.md |
-| [design/T05-i18n-templates.md](design/T05-i18n-templates.md) | Bilingual chrome + six fixtures |
+The old Stage 1 handoff, review notes, screenshot notes and individual Stage 2 progress reports are under `docs/archive/`. They describe historical checkpoints and are superseded by `status.md`.
