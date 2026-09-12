@@ -18,7 +18,8 @@ type OriginFilter = 'all' | 'mine' | 'demo' | 'template'
 
 export function AnalysesPage() {
   const navigate = useNavigate()
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
+  const isZh = locale === 'zh-CN'
   const health = useHealth()
   const { state, projects, error, reload, seedDemo } = useProjects()
   const templates = useTemplates()
@@ -123,10 +124,28 @@ export function AnalysesPage() {
           </div>
         </header>
 
+        <nav className="workflow-steps" aria-label={isZh ? '工作流' : 'Workflow'}>
+          <span className="workflow-step active"><b>1</b><span><strong>{isZh ? '材料收集' : 'Materials'}</strong><small>Materials</small></span></span>
+          <span className="workflow-line" aria-hidden="true" />
+          <span className="workflow-step"><b>2</b><span><strong>{isZh ? '建模分析' : 'Modeling'}</strong><small>Modeling</small></span></span>
+          <span className="workflow-line" aria-hidden="true" />
+          <span className="workflow-step"><b>3</b><span><strong>{isZh ? '基线设定' : 'Baseline'}</strong><small>Baseline</small></span></span>
+          <span className="workflow-line" aria-hidden="true" />
+          <span className="workflow-step"><b>4</b><span><strong>{isZh ? '结果洞察' : 'Results'}</strong><small>Results</small></span></span>
+        </nav>
+
         <section className="masthead">
           <div>
             <h1>{t('analysesTitle')}</h1>
             <p className="lede">{t('analysesIntro')}</p>
+            <div className="home-brief">
+              <div className="brief-heading"><span className="brief-dot" /> {isZh ? '当前工作区' : 'Current workspace'}</div>
+              <p>{isZh ? '从一份决策问题开始，逐步整理材料、确认基线，再运行确定性求解。' : 'Start with a decision question, organize evidence, confirm a baseline, then run a deterministic solve.'}</p>
+              <div className="brief-links">
+                <span>{isZh ? '材料' : 'Analyses'} <strong>{projects.length}</strong></span>
+                <span>{isZh ? '可运行案例' : 'Runnable cases'} <strong>{templates.templates.filter((item) => item.id === 'training-schedule' || item.id === 'product-portfolio-selection').length}</strong></span>
+              </div>
+            </div>
           </div>
           <form className="composer" onSubmit={onCreate}>
             <h2>{t('startAnalysis')}</h2>

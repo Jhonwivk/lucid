@@ -1265,6 +1265,47 @@
 
 .template-facts strong { color: var(--ink); }
 
+/* Evidence-first home: the workflow remains visible while the working content
+   starts immediately below it. */
+.workflow-steps {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  margin-bottom: 22px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+}
+.workflow-step { display: inline-flex; align-items: center; gap: 9px; color: var(--margin); }
+.workflow-step b { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--surface-soft); color: var(--ink); font-size: .85rem; }
+.workflow-step.active { color: var(--ink-deep); }
+.workflow-step.active b { background: var(--link); color: #fff; }
+.workflow-step strong, .workflow-step small { display: block; }
+.workflow-step strong { font-size: .9rem; font-weight: 650; }
+.workflow-step small { margin-top: 1px; font-size: .7rem; color: var(--margin); }
+.workflow-line { flex: 1; height: 1px; background: var(--line); min-width: 18px; }
+.home-brief { max-width: 35rem; margin-top: 28px; padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--paper); }
+.brief-heading { display: flex; align-items: center; gap: 8px; font-weight: 650; color: var(--ink-deep); }
+.brief-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.home-brief p { margin: 8px 0 14px; color: var(--margin); line-height: 1.6; }
+.brief-links { display: flex; gap: 24px; color: var(--margin); font-size: .86rem; }
+.brief-links strong { color: var(--ink); font-size: 1.05rem; margin-left: 5px; }
+
+.page:has(.masthead) .masthead { grid-template-columns: minmax(0, 1fr) minmax(360px, 460px); gap: 42px; min-height: 0; align-items: start; }
+.page:has(.masthead) .masthead > div:first-child { padding-top: 8px; }
+.page:has(.masthead) .masthead h1 { max-width: none; font-size: clamp(2.35rem, 4vw, 3.5rem); letter-spacing: -0.045em; line-height: 1; }
+.page:has(.masthead) .masthead .lede { margin-top: 14px; }
+.template-section { padding-top: 28px; }
+
+@media (max-width: 680px) {
+  .workflow-steps { overflow-x: auto; justify-content: flex-start; }
+  .workflow-line { min-width: 22px; flex: 0 0 22px; }
+  .workflow-step { flex: 0 0 auto; }
+  .page:has(.masthead) .masthead { grid-template-columns: 1fr; gap: 24px; }
+  .home-brief { max-width: none; }
+}
+
 @media (max-width: 980px) {
   .page:has(.masthead) .masthead { gap: 28px; }
   .template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
