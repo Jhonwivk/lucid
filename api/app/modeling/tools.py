@@ -16,7 +16,7 @@ from .. import ingest, store
 from ..db import get_data_dir
 from ..runtime_config import azure_settings
 from . import persistence
-from .azure_cu import AzureContentUnderstanding, AzureUnavailableError
+from .azure_cu import AzureContentUnderstanding, AzureUnavailableError, public_locator_map
 from .context import require_run
 from .draft import ModelingDraft
 from .provenance import (
@@ -285,6 +285,14 @@ def read_source(
                 "original_coordinates": "unknown",
             },
             "derived_labeled": bool(derived_preview),
+            "analyzer_id": None if not analysis or str(analysis.get("status") or "") != "succeeded" else analysis.get("analyzer_id"),
+            "operation_id": None if not analysis or str(analysis.get("status") or "") != "succeeded" else analysis.get("operation_id"),
+            "material_checksum": material.get("checksum"),
+            "provider_locators": (
+                []
+                if not analysis or str(analysis.get("status") or "") != "succeeded"
+                else public_locator_map(analysis.get("derived"))
+            ),
             "note": (
                 "Reading one excerpt does not mean the whole material was analyzed. "
                 "Derived Azure markdown is not original file coordinates."
@@ -340,6 +348,8 @@ def understand_material(material_id: str) -> str:
                 "truncated": bounded["truncated"],
                 "next_offset": bounded["next_offset"],
                 "total_chars": bounded["total_chars"],
+                "material_checksum": material.get("checksum"),
+                "provider_locators": public_locator_map(cached.get("derived")),
             },
             ensure_ascii=False,
         )
@@ -470,6 +480,8 @@ def understand_material(material_id: str) -> str:
             "truncated": None if bounded is None else bounded["truncated"],
             "next_offset": None if bounded is None else bounded["next_offset"],
             "total_chars": None if bounded is None else bounded["total_chars"],
+            "material_checksum": material.get("checksum"),
+            "provider_locators": public.get("provider_locators") or [],
             "error_code": public.get("error_code"),
             "error_message": public.get("error_message"),
         },

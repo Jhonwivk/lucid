@@ -92,15 +92,13 @@ def resume_run(run_id: str, answer: str) -> dict[str, Any]:
     claimed = persistence.claim_resume(run_id, answer)
     claim_id = claimed.get("resume_claim_id")
     try:
-        _spawn(run_id, resume=answer.strip())
-    except store.ConflictError:
-        if _worker_alive(run_id):
-            return persistence.get_run(run_id)
-        persistence.rollback_resume(run_id, claim_id)
-        raise
+        thread = _spawn(run_id, resume=answer.strip())
     except Exception:
         persistence.rollback_resume(run_id, claim_id)
         raise
+    if not _resume_worker_took_over(run_id, thread):
+        persistence.rollback_resume(run_id, claim_id)
+        raise store.ConflictError("resume worker did not take over the clarification")
     return persistence.get_run(run_id)
 
 
@@ -124,6 +122,24 @@ def has_checkpoint(thread_id: str) -> bool:
 def _worker_alive(run_id: str) -> bool:
     thread = _threads.get(run_id)
     return thread is not None and thread.is_alive()
+
+
+def _forget_worker(run_id: str, thread: threading.Thread) -> None:
+    """Drop this thread's identity so a later resume can spawn a new worker."""
+    with _lock:
+        if _threads.get(run_id) is thread:
+            _threads.pop(run_id, None)
+
+
+def _resume_worker_took_over(run_id: str, thread: threading.Thread) -> bool:
+    if thread.ident is None:
+        return False
+    with _lock:
+        current = _threads.get(run_id)
+    if current is thread:
+        return True
+    # The worker started and already finished (finally popped itself).
+    return current is None and not thread.is_alive()
 
 
 def recover_orphaned_runs() -> list[dict[str, Any]]:
@@ -188,14 +204,16 @@ def recover_on_startup() -> None:
     recover_orphaned_runs()
 
 
-def _spawn(run_id: str, resume: str | None) -> None:
+def _spawn(run_id: str, resume: str | None) -> threading.Thread:
     with _lock:
         existing = _threads.get(run_id)
-        if existing is not None and existing.is_alive():
+        human_resume = resume not in {None, "__continue__"}
+        if existing is not None and existing.is_alive() and not human_resume:
             raise store.ConflictError("run already has an active worker")
         thread = threading.Thread(target=_execute, args=(run_id, resume), daemon=True)
         _threads[run_id] = thread
-    thread.start()
+        thread.start()
+    return thread
 
 
 def _deadline_iso(seconds: int) -> str:
@@ -261,9 +279,9 @@ def _finish(run_id: str, **fields: Any) -> None:
 
 
 def _execute(run_id: str, resume: str | None) -> None:
-    run = persistence.get_run(run_id)
     token = None
     try:
+        run = persistence.get_run(run_id)
         if run["cancel_requested"] or run["status"] == "cancelled":
             return
         if run["status"] in persistence.TERMINAL_STATUSES:
@@ -358,6 +376,7 @@ def _execute(run_id: str, resume: str | None) -> None:
             result = _invoke_with_deadline(graph, payload, config, run_id, run.get("wall_deadline_at"))
         except GraphInterrupt:
             _finish(run_id, status="waiting_for_user", wall_deadline_at=None)
+            _forget_worker(run_id, threading.current_thread())
             persistence.append_event(run_id, kind="status", title="Waiting for clarification")
             return
         state = graph.get_state(config)
@@ -367,6 +386,7 @@ def _execute(run_id: str, resume: str | None) -> None:
         run_after = persistence.get_run(run_id)
         if interrupts and not (run_after.get("drafts") or []):
             _finish(run_id, status="waiting_for_user", wall_deadline_at=None)
+            _forget_worker(run_id, threading.current_thread())
             persistence.append_event(
                 run_id,
                 kind="status",
@@ -444,6 +464,7 @@ def _execute(run_id: str, resume: str | None) -> None:
     finally:
         if token is not None:
             CURRENT_RUN.reset(token)
+        _forget_worker(run_id, threading.current_thread())
 
 
 def wait_for_run(run_id: str, timeout: float = 90.0) -> dict[str, Any]:

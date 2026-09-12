@@ -143,6 +143,7 @@ export function WorkbenchPage() {
                     projectId={projectId}
                     baselines={showing.baselines}
                     drafts={showing.drafts}
+                    runs={showing.modelingRuns}
                     currentBaselineId={showing.project.latest.baseline_id}
                     reload={reload}
                   />

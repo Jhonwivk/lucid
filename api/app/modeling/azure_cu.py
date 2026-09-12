@@ -37,6 +37,7 @@ class AzureJob:
     def public_dict(self) -> dict[str, Any]:
         derived = self.derived or {}
         markdown = derived.get("markdown") if isinstance(derived, dict) else None
+        locators = public_locator_map(derived) if self.status == "succeeded" else []
         return {
             "status": self.status,
             "operation_id": self.operation_id,
@@ -45,6 +46,7 @@ class AzureJob:
             "derived": derived if self.status == "succeeded" else None,
             "derived_markdown": markdown if self.status == "succeeded" else None,
             "derived_coordinate_system": "azure_markdown",
+            "provider_locators": locators,
             "error_code": self.error_code,
             "error_message": self.error_message,
         }
@@ -244,6 +246,37 @@ def _to_jsonable(value: Any) -> Any:
         return {"repr": type(value).__name__}
 
 
+def public_locator_map(derived: Any) -> list[dict[str, Any]]:
+    """Bounded locator rows for Agent tools. No URLs, tokens, or raw provider secrets."""
+    locators: list[Any] = []
+    if isinstance(derived, dict):
+        raw = derived.get("provider_locators")
+        if isinstance(raw, list):
+            locators = raw
+    out: list[dict[str, Any]] = []
+    for index, item in enumerate(locators):
+        if not isinstance(item, dict):
+            continue
+        locator_id = item.get("locator_id") or f"az-loc-{index + 1}"
+        original = item.get("original_coordinates")
+        has_mapped_original = original == "mapped" and any(
+            item.get(key) not in (None, "") for key in ("sheet", "cell_ref", "cell", "region")
+        )
+        out.append(
+            {
+                "locator_id": str(locator_id),
+                "page": item.get("page"),
+                "sheet": item.get("sheet"),
+                "cell_ref": item.get("cell_ref") or item.get("cell"),
+                "offset": item.get("offset"),
+                "length": item.get("length"),
+                "coordinate_system": item.get("coordinate_system") or "azure_markdown",
+                "original_coordinates": "mapped" if has_mapped_original else "unknown",
+            }
+        )
+    return out
+
+
 def derive_representation(raw: Any) -> dict[str, Any]:
     """Provider-derived markdown/text plus locator mapping. Not original coordinates."""
     markdown = None
@@ -271,9 +304,13 @@ def derive_representation(raw: Any) -> dict[str, Any]:
                     if isinstance(item, dict):
                         locators.append(
                             {
+                                "locator_id": f"az-loc-{len(locators) + 1}",
                                 "coordinate_system": "azure_markdown",
                                 "offset": item.get("offset"),
                                 "length": item.get("length"),
+                                "page": item.get("pageNumber") or item.get("page"),
+                                "sheet": item.get("sheet"),
+                                "cell_ref": item.get("cell_ref") or item.get("cell"),
                                 "original_coordinates": "unknown",
                             }
                         )
@@ -285,9 +322,14 @@ def derive_representation(raw: Any) -> dict[str, Any]:
                 parts.append(item["markdown"])
                 locators.append(
                     {
+                        "locator_id": f"az-loc-{len(locators) + 1}",
                         "coordinate_system": "azure_markdown",
                         "kind": item.get("kind") or item.get("type"),
                         "page": item.get("pageNumber") or item.get("page"),
+                        "sheet": item.get("sheet"),
+                        "cell_ref": item.get("cell_ref") or item.get("cell"),
+                        "offset": item.get("offset"),
+                        "length": item.get("length"),
                         "original_coordinates": "unknown",
                     }
                 )

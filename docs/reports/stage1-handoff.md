@@ -2,7 +2,7 @@
 
 Date: 2026-09-12. Workspace: `/Users/hairen/project/lucid`.
 Branch: `cursor/stage1-recoverable-frozen-review-loop`.
-Working base: HEAD `416ae9a`. A worker exit code is not product acceptance.
+Working base: HEAD `6fa19b9`. A worker exit code is not product acceptance.
 
 This is the authoritative Stage 1 delivery summary. Historical notes under `/Users/hairen/project/.tasks/` are execution records, not a second spec.
 
@@ -12,23 +12,21 @@ Pipeline (unchanged; still one Business Modeling Agent, no solver):
 
 ## What this wrap-up completed
 
-Four remaining review leftovers on the recoverable frozen-review loop. No second modeling Agent. No T11–T20 / solver.
+Three leftover review items on the recoverable frozen-review loop. No second modeling Agent. No T11–T20 / solver.
 
-1. **Clarification wall-time.** `waiting_for_user` clears `wall_deadline_at` (including `update_run`, GraphInterrupt, and `rollback_resume`). Human wait does not consume the Agent wall budget. `claim_resume` installs a fresh execution deadline from `max_wall_seconds` on the same run / same LangGraph checkpoint / same clarification. A late human answer after the old deadline has expired does not immediately timeout.
+1. **Clarification resume handover.** A waiting worker drops its `_threads` identity as soon as the run enters `waiting_for_user`, and again in `finally`. Human `resume_run` replaces a leftover waiting thread instead of treating it as the resume worker. After spawn, resume confirms the new thread took over the claim; if it did not start, `rollback_resume` restores the same pending clarification. The run cannot stay `running` with no worker after the old thread exits.
 
-2. **Terminal write race.** `save_draft` validates, then opens a `BEGIN IMMEDIATE` persist transaction that re-checks writable status and CAS-updates the run before inserting draft / claims / understanding / project-head. Cancel or timeout in that window rolls the whole write back. `update_coverage`, `append_event`, and `increment_tool_count` refuse writes after the run leaves `queued` / `running` / `waiting_for_user`. Terminal CAS is unchanged: no “write then repair status”.
+2. **BaselineWorkspace draft isolation.** `selectBaselineDraft` only returns a draft for the latest modeling run. If that run has no draft, the page shows in-progress / no-draft copy and Freeze stays disabled. Historical project drafts are not offered as the freeze target. A backend 409 is not the normal empty-state path.
 
-3. **ModelingWorkspace draft isolation.** `selectDraftForRun` returns only a draft for the selected `latestRunId`. If that run has no draft, the UI shows in-progress / no-draft copy and empty claims. Review and freeze are disabled unless the visible draft belongs to the current run and is still `draft`. Coverage, snapshot, and events continue to come from the same selected run.
-
-4. **Freeze + Azure provenance.** `freeze_baseline` re-reads every snapshot file before confirming the draft. Missing bytes, `copy_error`, or checksum mismatch fail freeze and leave `version_state=draft`. `azure_markdown` requires a persisted artifact with `status=succeeded`, non-negative offsets that stay inside derived markdown, and a persisted locator map whenever the ref also claims original page/sheet/cell/region. Quote-in-whole-markdown is not enough for that mixed-locator case.
+3. **Public Azure locator map.** `understand_material` and `read_source` now return a bounded `provider_locators` list (`locator_id`, `page`, `sheet`, `cell_ref`, `offset`, `length`, `coordinate_system`, `original_coordinates`). Locators without a reliable original mapping are `original_coordinates='unknown'`. Analyzer / operation / checksum checks are unchanged. Operation URLs, continuation tokens, and other secrets stay out of tool payloads. A page-linked `azure_markdown` ref can be built from that tool output and pass `validate_ref`; the same ref without a persisted locator map is still rejected.
 
 Not done: solver, T11–T20, a second modeling Agent, GitHub CI (not executed this wrap-up), live Agent pass, live Azure job.
 
 ## Main files changed (this wrap-up)
 
-Backend: `api/app/modeling/persistence.py`, `provenance.py`, `runner.py`, `snapshot.py`.
+Backend: `api/app/modeling/runner.py`, `tools.py`, `azure_cu.py`.
 
-UI: `web/src/lib/sourceView.ts`, `web/src/pages/workspaces/ModelingWorkspace.tsx`, `web/src/i18n.tsx`.
+UI: `web/src/lib/sourceView.ts`, `web/src/pages/workspaces/BaselineWorkspace.tsx`, `web/src/pages/WorkbenchPage.tsx`.
 
 Verifiers: `scripts/verify_stage1_recovery_snapshot.py`.
 
@@ -39,7 +37,7 @@ Docs: this file.
 | Command | Exit | Notes |
 | --- | --- | --- |
 | `api/.venv/bin/python -m compileall -q api/app` | 0 | |
-| `api/.venv/bin/python scripts/verify_stage1_recovery_snapshot.py` | 0 | Labeled doubles, isolated temp dir. Covers late clarification after an expired wall deadline, save_draft cancel-between-validate-and-persist, R1/R2 draft selection, freeze after snapshot tamper, failed Azure artifact, Azure offset overflow, page=1 + Azure without/with a page=2 locator map. **Not** a live model/Azure run. |
+| `api/.venv/bin/python scripts/verify_stage1_recovery_snapshot.py` | 0 | Labeled doubles, isolated temp dir. Covers leftover-waiting-thread resume, Baseline R1/R2 draft selection, Agent-constructed page-linked Azure refs. **Not** a live model/Azure run. |
 | `api/.venv/bin/python scripts/verify_stage1_review_findings.py` | 0 | Labeled doubles, isolated temp dir. Env keys blanked so local `.env` cannot refill a live provider into this verifier. |
 | `cd web && npm run build` | 0 | `tsc -b && vite build` |
 | `cd web && npm run lint` | 0 | oxlint: existing i18n export warning; SourceViewer `setState` in preview effect warning. No errors. |
@@ -72,13 +70,9 @@ Do not describe the isolated labeled-double tests as real provider verification.
 
 All of the following passed inside `verify_stage1_recovery_snapshot.py`:
 
-- Run enters `waiting_for_user`, old `wall_deadline_at` is set in the past, user resumes: same run and thread continue; status is not `timeout`; the clarification answer is consumed and a draft is published.
-- `save_draft` hook cancels after validation and before persist: `StaleRunError`, no draft row, project head unchanged, run stays `cancelled`.
-- Pure `select_draft_for_run`: R1 has a draft, selecting R2 returns no draft and no R1 claims.
-- Snapshot bytes tampered after `save_draft` and before `freeze_baseline`: freeze fails; draft remains `draft`.
-- Failed Azure artifact that still has `derived_markdown`: rejected (`succeeded` required).
-- Azure markdown `end_offset` past derived length: rejected.
-- `page=1` plus `azure_markdown` without a locator map, and `page=1` with a persisted map that only has `page=2`: both rejected. Quote presence in the whole markdown is not accepted as proof.
+- After `waiting_for_user`, a leftover alive thread is left in `_threads`; `resume_run` replaces it, the clarification is answered, and the run reaches `partial` / `completed` instead of staying `running`.
+- Baseline selection: R1 has a draft, R2 is the latest run with no draft → selected draft is null (no R1 claims).
+- `understand_material` on a succeeded Azure artifact returns public locators; an `EvidenceRef` built only from that payload + checksum passes `validate_ref`. Page-linked Azure refs without a locator map still fail.
 
 ## Remaining / blocked
 

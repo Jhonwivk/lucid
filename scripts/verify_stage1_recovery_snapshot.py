@@ -111,7 +111,9 @@ def main() -> None:
     from app.modeling.context import CURRENT_RUN, RunContext
     from app.modeling.fakes import AdaptiveScriptModel
     from app.modeling.snapshot import get_snapshot_material, live_material_file, read_snapshot_bytes
-    from app.modeling.tools import read_source
+    from app.modeling.draft import EvidenceRef
+    from app.modeling.provenance import validate_ref
+    from app.modeling.tools import read_source, understand_material
     from app.schemas import ProjectCreate
 
     ensure_database()
@@ -538,6 +540,41 @@ def main() -> None:
     ]
     expect(len(answered) == 1, finished_late.get("clarifications"))
     expect(finished_late.get("drafts"), finished_late)
+
+    # --- Leftover waiting worker must not keep resume stuck in running ---
+    linger_project = store.create_project(ProjectCreate(title="Resume leftover worker"))
+    ingest.ingest_direct_text(linger_project["id"], "Approval owner is missing.", label="Gap")
+    linger_run = runner.start_run(
+        linger_project["id"],
+        "Who approves overtime?",
+        model=AdaptiveScriptModel(clarify_once=True),
+    )
+    linger_waiting = runner.wait_for_run(linger_run["id"], timeout=60)
+    expect(linger_waiting["status"] == "waiting_for_user", linger_waiting)
+    leftover_hold = threading.Event()
+    leftover_started = threading.Event()
+
+    def leftover_body() -> None:
+        leftover_started.set()
+        leftover_hold.wait(10)
+
+    leftover = threading.Thread(target=leftover_body, name="leftover-waiting-worker", daemon=True)
+    leftover.start()
+    expect(leftover_started.wait(2), "leftover waiting thread should start")
+    runner._threads[linger_waiting["id"]] = leftover
+    resumed_linger = runner.resume_run(linger_waiting["id"], "The plant manager is the overtime approver.")
+    expect(resumed_linger["id"] == linger_waiting["id"], resumed_linger)
+    expect(resumed_linger["status"] != "failed" or resumed_linger.get("error_code") != "worker_lost", resumed_linger)
+    expect(runner._threads.get(linger_waiting["id"]) is not leftover, "resume must replace the leftover thread")
+    leftover_hold.set()
+    leftover.join(2)
+    finished_linger = runner.wait_for_run(linger_waiting["id"], timeout=60)
+    expect(finished_linger["status"] in {"partial", "completed"}, finished_linger)
+    expect(finished_linger["status"] != "running", finished_linger)
+    expect(
+        any(item.get("status") == "answered" for item in (finished_linger.get("clarifications") or [])),
+        finished_linger.get("clarifications"),
+    )
 
     # --- Restart recovery for injected queued/running doubles ---
     orphan_project = store.create_project(ProjectCreate(title="Orphan"))
@@ -1073,6 +1110,26 @@ def main() -> None:
     selected_r1 = select_draft_for_run([r1_draft], "R1")
     expect(selected_r1 is not None and selected_r1.get("claims"), selected_r1)
 
+    def select_baseline_draft(drafts: list[dict], runs: list[dict]) -> dict | None:
+        if not runs:
+            return None
+        latest = sorted(
+            runs,
+            key=lambda item: (item.get("updated_at") or "", item.get("created_at") or "", item.get("id") or ""),
+            reverse=True,
+        )[0]
+        return select_draft_for_run(drafts, latest.get("id"))
+
+    baseline_selected = select_baseline_draft(
+        [r1_draft],
+        [
+            {"id": "R1", "updated_at": "2026-09-12T01:00:00", "created_at": "2026-09-12T01:00:00"},
+            {"id": "R2", "updated_at": "2026-09-12T02:00:00", "created_at": "2026-09-12T02:00:00"},
+        ],
+    )
+    expect(baseline_selected is None, baseline_selected)
+    expect((baseline_selected or {}).get("claims") in (None, []), baseline_selected)
+
     # --- Freeze re-reads snapshot bytes; Azure provenance rejects failed/out-of-range/unmapped refs ---
     freeze_project = store.create_project(ProjectCreate(title="Freeze snapshot recheck"))
     freeze_src = ingest.ingest_direct_text(
@@ -1289,6 +1346,78 @@ def main() -> None:
         ),
         "locator map",
     )
+
+    persistence.upsert_analysis(
+        az_project["id"],
+        az_src["material"]["id"],
+        {
+            "material_checksum": az_checksum,
+            "provider": "azure_content_understanding",
+            "analyzer_id": "prebuilt-document",
+            "operation_id": "op-ok",
+            "status": "succeeded",
+            "derived_markdown": azure_markdown,
+            "derived": {
+                "coordinate_system": "azure_markdown",
+                "provider_locators": [
+                    {
+                        "locator_id": "az-loc-1",
+                        "page": 2,
+                        "offset": azure_markdown.find("Capacity"),
+                        "length": len("Capacity must not exceed 12 seats"),
+                        "coordinate_system": "azure_markdown",
+                        "original_coordinates": "unknown",
+                    }
+                ],
+            },
+        },
+    )
+    _running(persistence, az_run["id"])
+    az_token = CURRENT_RUN.set(
+        RunContext(
+            project_id=az_project["id"],
+            run_id=az_run["id"],
+            thread_id=az_run["thread_id"],
+            live_execution=False,
+        )
+    )
+    try:
+        understood = json.loads(understand_material.invoke({"material_id": az_src["material"]["id"]}))
+    finally:
+        CURRENT_RUN.reset(az_token)
+    understood_blob = json.dumps(understood)
+    expect("continuation_token" not in understood, understood)
+    expect("operation_url" not in understood, understood)
+    expect("PRIVATE" not in understood_blob, understood_blob)
+    locators = understood.get("provider_locators") or []
+    loc = next((item for item in locators if item.get("page") == 2), None)
+    expect(loc is not None, locators)
+    expect(loc.get("locator_id") == "az-loc-1", loc)
+    expect(loc.get("original_coordinates") == "unknown", loc)
+    expect(loc.get("coordinate_system") == "azure_markdown", loc)
+    expect(understood.get("analyzer_id") == "prebuilt-document", understood)
+    expect(understood.get("operation_id") == "op-ok", understood)
+    constructed = EvidenceRef.model_validate(
+        {
+            "material_id": az_src["material"]["id"],
+            "material_checksum": understood.get("material_checksum") or az_checksum,
+            "precision": "exact",
+            "coordinate_system": "azure_markdown",
+            "page": loc["page"],
+            "quote": "Capacity must not exceed 12 seats",
+            "provider_locator": {
+                "analyzer_id": understood["analyzer_id"],
+                "operation_id": understood["operation_id"],
+                "locator_id": loc["locator_id"],
+                "page": loc["page"],
+                "offset": loc.get("offset"),
+                "length": loc.get("length"),
+                "coordinate_system": loc.get("coordinate_system"),
+            },
+        }
+    )
+    az_fresh = persistence.get_run(az_run["id"])
+    expect(validate_ref(az_fresh, constructed) is None, validate_ref(az_fresh, constructed))
 
     print("PASS: stage1 recovery/snapshot/provenance/export/state-machine")
     print(f"isolated_data_dir={TMP}")

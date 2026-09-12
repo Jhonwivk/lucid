@@ -1,14 +1,18 @@
 import { EmptyState } from '../../components/EmptyState'
-import type { ModelingBaseline, ModelingDraftRecord } from '../../api/types'
+import type { ModelingBaseline, ModelingDraftRecord, ModelingRun } from '../../api/types'
 import { useI18n } from '../../i18n'
 import { freezeBaseline, errorMessage } from '../../api/client'
 import { formatTimestamp } from '../../lib/format'
+import { canFreezeSelectedDraft, selectBaselineDraft, selectLatestModelingRun } from '../../lib/sourceView'
 import { useMemo, useState } from 'react'
+
+const IN_FLIGHT = new Set(['queued', 'running', 'waiting_for_user'])
 
 type BaselineWorkspaceProps = {
   projectId: string
   baselines: ModelingBaseline[]
   drafts: ModelingDraftRecord[]
+  runs: ModelingRun[]
   currentBaselineId?: string | null
   reload: () => Promise<void> | void
 }
@@ -25,6 +29,7 @@ export function BaselineWorkspace({
   projectId,
   baselines,
   drafts,
+  runs,
   currentBaselineId,
   reload,
 }: BaselineWorkspaceProps) {
@@ -43,11 +48,13 @@ export function BaselineWorkspace({
     if (currentBaselineId) setSelectedId(currentBaselineId)
   }
   const selected = ordered.find((item) => item.id === selectedId) ?? ordered[0]
-  const latestDraft = drafts[drafts.length - 1] ?? null
-  const canFreeze = latestDraft && latestDraft.version_state !== 'confirmed'
+  const latestRun = useMemo(() => selectLatestModelingRun(runs, null), [runs])
+  const latestDraft = useMemo(() => selectBaselineDraft(drafts, runs), [drafts, runs])
+  const canFreeze = canFreezeSelectedDraft(latestDraft, latestRun?.id)
+  const runInFlight = Boolean(latestRun && IN_FLIGHT.has(latestRun.status))
 
   async function onFreeze() {
-    if (!latestDraft || busy) return
+    if (!canFreeze || !latestDraft || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -99,7 +106,10 @@ export function BaselineWorkspace({
             </button>
           </p>
         ) : (
-          <EmptyState title={t('noDraft')} body={t('freezeOnBaseline')} />
+          <EmptyState
+            title={runInFlight ? t('draftInProgress') : t('noDraft')}
+            body={runInFlight ? t('draftInProgressBody') : latestRun ? t('runHasNoDraftBody') : t('freezeOnBaseline')}
+          />
         )}
         {error ? <p role="alert">{error}</p> : null}
       </div>

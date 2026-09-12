@@ -88,6 +88,21 @@ export function selectDraftForRun(
   return forRun[forRun.length - 1] ?? null
 }
 
+export function selectBaselineDraft(
+  drafts: ModelingDraftRecord[],
+  runs: ModelingRun[],
+): ModelingDraftRecord | null {
+  const latest = selectLatestModelingRun(runs, null)
+  return selectDraftForRun(drafts, latest?.id)
+}
+
+export function canFreezeSelectedDraft(
+  draft: ModelingDraftRecord | null,
+  runId: string | null | undefined,
+): boolean {
+  return Boolean(draft && runId && draft.run_id === runId && draft.version_state !== 'confirmed')
+}
+
 export function selectLatestModelingRun(
   runs: ModelingRun[],
   pinnedRunId: string | null,
