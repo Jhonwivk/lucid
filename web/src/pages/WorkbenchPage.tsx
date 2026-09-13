@@ -121,11 +121,8 @@ export function WorkbenchPage() {
                   <span className="stamp template-stamp">{t('templateFixture')}</span>
                 ) : null}
               </div>
-              <h1>{showing.project.title}</h1>
-              {showing.project.decision_question ? <p className="lede">{showing.project.decision_question}</p> : null}
-              {showing.project.summary && showing.project.summary !== showing.project.decision_question ? (
-                <p className="muted">{showing.project.summary}</p>
-              ) : null}
+              <div className="lu-workspace-title"><span className="lu-step-badge">{WORKSPACE_IDS.indexOf(current) + 1}</span><h1>{labels[current]}</h1></div>
+              <p className="lede lu-project-context"><strong>{showing.project.title}</strong>{showing.project.decision_question ? ` · ${showing.project.decision_question}` : showing.project.summary ? ` · ${showing.project.summary}` : ''}</p>
             </div>
 
             <nav className="workspace-nav" aria-label={t('analysisWorkspaces')}>

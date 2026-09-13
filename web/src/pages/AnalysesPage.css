@@ -225,10 +225,14 @@ a.lu-evidence:hover { background: var(--lu-blue-wash); }
 .lu-workbench-page .workspace-content { min-width: 0; }
 .lu-workbench-page .project-head { padding: 28px 0 0; }
 .lu-workbench-page .project-head h1 { color: var(--lu-navy); font-size: 2rem; letter-spacing: -.05em; }
+.lu-workbench-page .lu-workspace-title { display: flex; align-items: center; gap: 13px; margin-top: 22px; }
+.lu-workbench-page .lu-workspace-title h1 { margin: 0; font-size: 2.1rem; }
+.lu-workbench-page .lu-project-context { margin: 9px 0 0 49px; max-width: 880px; }
+.lu-workbench-page .lu-project-context strong { color: var(--lu-navy); font-weight: 650; }
 .lu-workbench-page .project-head .lede { color: var(--lu-muted); font-size: .9rem; }
 .lu-workbench-page .project-kicker { color: var(--lu-muted); }
 .lu-workbench-page .project-kicker .crumb { color: var(--lu-blue); }
-.lu-workbench-page .workspace-nav { margin: 22px 0 24px; border-bottom-color: var(--lu-border); }
+.lu-workbench-page .workspace-nav { display: none; }
 .lu-workbench-page .workspace-link { padding: 12px 16px; color: var(--lu-muted); }
 .lu-workbench-page .workspace-link.active { color: var(--lu-blue); border-bottom-color: var(--lu-blue); }
 .lu-workbench-page .work-main { min-width: 0; }
@@ -261,5 +265,27 @@ a.lu-evidence:hover { background: var(--lu-blue-wash); }
 .lu-workbench-page .solve-run-card, .lu-workbench-page .what-if-panel, .lu-workbench-page .comparison-panel { border-color: var(--lu-border); border-radius: 10px; background: #fff; }
 .lu-workbench-page .solve-run-card .run-state.optimal, .lu-workbench-page .solve-run-card .run-state.feasible { color: var(--lu-green); }
 .lu-workbench-page .solve-run-card .run-state.infeasible, .lu-workbench-page .solve-run-card .run-state.model_invalid { color: #bd3847; }
+.lu-workbench-page .stage2-formalization { display: grid; gap: 16px; padding: 18px; border: 1px solid var(--lu-border); border-radius: 10px; background: #fbfcfe; }
+.lu-workbench-page .stage2-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 14px; border: 1px solid var(--lu-border); border-radius: 9px; background: #fff; }
+.lu-workbench-page .flow-arrow { display: none; }
+.lu-workbench-page .flow-step { padding: 12px; border: 1px solid var(--lu-border); border-radius: 8px; background: #fff; }
+.lu-workbench-page .flow-step.complete { border-color: #b8e8d2; background: #f7fffb; }
+.lu-workbench-page .flow-step.warning { border-color: #f0d79a; background: #fffaf0; }
+.lu-workbench-page .results-grid, .lu-workbench-page .solve-history { min-width: 0; }
+.lu-workbench-page .solve-input-card { display: grid; gap: 12px; }
+.lu-workbench-page .solve-input-card .inline-form { align-items: end; }
+.lu-workbench-page .solve-run-card { display: grid; gap: 12px; }
+.lu-workbench-page .solve-run-card > .review-actions { order: 2; }
+.lu-workbench-page .solve-run-card > .stack { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; order: 3; }
+.lu-workbench-page .solve-run-card > .explanation { order: 4; }
+.lu-workbench-page .candidate-card { min-width: 0; margin: 0; }
+.lu-workbench-page .candidate-card .schedule-table { overflow-x: auto; }
+.lu-workbench-page .what-if-panel, .lu-workbench-page .comparison-panel { display: grid; gap: 12px; }
+.lu-workbench-page .comparison-panel .inline-form { align-items: end; }
+.lu-workbench-page .solve-history { border: 1px solid var(--lu-border); border-radius: 10px; background: #fff; padding: 14px 18px; }
+.lu-workbench-page .solve-history > summary { color: var(--lu-navy); cursor: pointer; font-weight: 650; }
+.lu-workbench-page .what-if-panel, .lu-workbench-page .comparison-panel { background: #fff; }
+.lu-workbench-page .meta-row { color: var(--lu-muted); }
 @keyframes lu-stage-in { from { opacity: .55; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 900px) { .lu-workbench-page .solve-run-card > .stack { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { .lu-workbench-page .shell { width: min(100% - 24px, 620px); } .lu-workbench-page .lu-header { height: auto; padding: 12px 0; } .lu-workbench-page .lu-stages { overflow-x: auto; padding: 0 8px; } .lu-workbench-page .lu-stage { min-width: 150px; } .lu-workbench-page .modeling-panes { grid-template-columns: 1fr; } }
