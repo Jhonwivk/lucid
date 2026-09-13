@@ -13,6 +13,7 @@ import { MaterialsWorkspace } from './workspaces/MaterialsWorkspace'
 import { ModelingWorkspace } from './workspaces/ModelingWorkspace'
 import { BaselineWorkspace } from './workspaces/BaselineWorkspace'
 import { ResultsWorkspace } from './workspaces/ResultsWorkspace'
+import './AnalysesPage.css'
 
 function resolveWorkspace(value: string | undefined): WorkspaceId | 'redirect' | null {
   if (!value) return null
@@ -46,9 +47,9 @@ export function WorkbenchPage() {
   const viewState = showing ? 'ready' : state === 'error' ? 'error' : 'loading'
 
   return (
-    <div className="page">
+    <div className="page lu-home lu-workbench-page">
       <div className="shell">
-        <header className="topbar">
+        <header className="topbar lu-header">
           <BrandMark subtle={t('workbench')} to="/analyses" />
           <div className="topbar-meta">
             <LanguageToggle />
@@ -64,6 +65,14 @@ export function WorkbenchPage() {
             />
           </div>
         </header>
+
+        <nav className="lu-stages" aria-label={t('analysisWorkspaces')}>
+          {WORKSPACE_IDS.map((id, index) => (
+            <Link key={id} className={`lu-stage ${id === current ? 'is-current' : ''}`} to={`/analyses/${projectId}/${id}`}>
+              <b>{index + 1}</b><span><strong>{labels[id]}</strong><small>{id[0].toUpperCase() + id.slice(1)}</small></span>
+            </Link>
+          ))}
+        </nav>
 
         {viewState === 'loading' ? <LoadingState label={t('openingAnalysis')} rows={5} /> : null}
         {viewState === 'error' ? (
