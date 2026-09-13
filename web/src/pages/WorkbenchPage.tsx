@@ -1,5 +1,6 @@
 import { Link, Navigate, useParams } from 'react-router-dom'
 import { BrandMark } from '../components/BrandMark'
+import { HomeIcon } from '../components/HomeIcon'
 import { ErrorState } from '../components/ErrorState'
 import { LanguageToggle } from '../components/LanguageToggle'
 import { LoadingState } from '../components/LoadingState'
@@ -51,6 +52,11 @@ export function WorkbenchPage() {
       <div className="shell">
         <header className="topbar lu-header">
           <BrandMark subtle={t('workbench')} to="/analyses" />
+          <label className="lu-global-search lu-workbench-search">
+            <HomeIcon name="search" />
+            <input aria-label={t('searchPlaceholder')} placeholder={t('searchPlaceholder')} readOnly />
+            <kbd>⌘ K</kbd>
+          </label>
           <div className="topbar-meta">
             <LanguageToggle />
             <StatusPill
@@ -63,6 +69,7 @@ export function WorkbenchPage() {
                     : t('apiUnavailable')
               }
             />
+            <span className="lu-avatar" title={t('workbench')}>L</span>
           </div>
         </header>
 

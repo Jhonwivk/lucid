@@ -217,6 +217,8 @@ a.lu-evidence:hover { background: var(--lu-blue-wash); }
 .lu-workbench-page { background: var(--lu-canvas); }
 .lu-workbench-page .shell { width: min(1520px, calc(100% - 64px)); }
 .lu-workbench-page .lu-header { display: flex; height: 76px; padding: 0; background: transparent; border-bottom: 0; }
+.lu-workbench-page .lu-workbench-search { flex: 1 1 520px; max-width: 620px; margin: 0 auto; }
+.lu-workbench-page .topbar-meta { margin-left: auto; }
 .lu-workbench-page .lu-stages { height: 64px; padding: 0 18px; border: 1px solid var(--lu-border); border-radius: 12px; background: #fff; }
 .lu-workbench-page .lu-stage { padding: 0 8px; }
 .lu-workbench-page .lu-stage.is-current::before { left: 8px; right: 25px; }
